@@ -7,7 +7,9 @@ from sglang.srt.layers.attention.linear.kernels.kernel_backend import (
 )
 from sglang.srt.utils import is_cpu, is_npu, is_xpu
 
-if not is_cpu():
+if is_cpu():
+    from sglang.kernels.ops.attention.fla.kda_cpu import chunk_kda
+else:
     from sglang.kernels.ops.attention.fla.fused_recurrent import (
         fused_recurrent_kda_packed_decode,
     )
