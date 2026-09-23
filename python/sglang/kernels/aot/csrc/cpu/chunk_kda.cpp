@@ -1,7 +1,9 @@
 #include <ATen/ATen.h>
 #include <ATen/Parallel.h>
+#include <ATen/native/CPUBlas.h>
 
 #include <cmath>
+#include <immintrin.h>
 
 #include "common.h"
 
