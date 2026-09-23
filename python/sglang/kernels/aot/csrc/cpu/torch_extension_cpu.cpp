@@ -35,6 +35,13 @@ at::Tensor l2norm_cpu(at::Tensor& input, double eps);
 
 // rmsnorm
 at::Tensor rmsnorm_cpu(at::Tensor& input, at::Tensor& weight, double eps);
+at::Tensor fused_rmsnorm_cpu(const at::Tensor& input, const at::Tensor& weight, double eps);
+std::tuple<at::Tensor, at::Tensor> fused_dual_residual_rmsnorm_cpu(
+    const at::Tensor& input,
+    const at::Tensor& residual,
+    const at::Tensor& weight1,
+    const at::Tensor& weight2,
+    double eps);
 at::Tensor gemma_rmsnorm_cpu(at::Tensor& input, at::Tensor& weight, double eps);
 at::Tensor gemma3_rmsnorm_cpu(at::Tensor& input, at::Tensor& weight, double eps);
 at::Tensor gemma4_rmsnorm_cpu(at::Tensor& input, at::Tensor& weight, double eps, double scale_shift, bool with_scale);
@@ -640,6 +647,12 @@ TORCH_LIBRARY_FRAGMENT(sgl_kernel, m) {
   // norm
   m.def("rmsnorm_cpu(Tensor input, Tensor weight, float eps) -> Tensor");
   m.impl("rmsnorm_cpu", torch::kCPU, &rmsnorm_cpu);
+  m.def("fused_rmsnorm_cpu(Tensor input, Tensor weight, float eps) -> Tensor");
+  m.impl("fused_rmsnorm_cpu", torch::kCPU, &fused_rmsnorm_cpu);
+  m.def(
+      "fused_dual_residual_rmsnorm_cpu(Tensor input, Tensor residual, Tensor weight1, Tensor weight2, float eps) -> "
+      "(Tensor, Tensor)");
+  m.impl("fused_dual_residual_rmsnorm_cpu", torch::kCPU, &fused_dual_residual_rmsnorm_cpu);
   m.def("gemma_rmsnorm_cpu(Tensor input, Tensor weight, float eps) -> Tensor");
   m.impl("gemma_rmsnorm_cpu", torch::kCPU, &gemma_rmsnorm_cpu);
   m.def("gemma3_rmsnorm_cpu(Tensor input, Tensor weight, float eps) -> Tensor");
