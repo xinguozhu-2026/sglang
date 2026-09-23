@@ -47,6 +47,31 @@ float router_dot_float_weight(
     const input_t* __restrict__ input,
     const float* __restrict__ weight,
     int64_t hidden_size) {
+#if defined(CPU_CAPABILITY_AVX512)
+  __m512 sum0 = _mm512_setzero_ps();
+  __m512 sum1 = _mm512_setzero_ps();
+  int64_t d = 0;
+  for (; d <= hidden_size - 32; d += 32) {
+    const __m256i raw0 = _mm256_loadu_si256(reinterpret_cast<const __m256i*>(input + d));
+    const __m256i raw1 = _mm256_loadu_si256(reinterpret_cast<const __m256i*>(input + d + 16));
+    __m512 x0;
+    __m512 x1;
+    if constexpr (std::is_same_v<input_t, at::BFloat16>) {
+      x0 = CVT_BF16_TO_FP32(raw0);
+      x1 = CVT_BF16_TO_FP32(raw1);
+    } else {
+      x0 = CVT_FP16_TO_FP32(raw0);
+      x1 = CVT_FP16_TO_FP32(raw1);
+    }
+    sum0 = _mm512_fmadd_ps(x0, _mm512_loadu_ps(weight + d), sum0);
+    sum1 = _mm512_fmadd_ps(x1, _mm512_loadu_ps(weight + d + 16), sum1);
+  }
+  float sum = _mm512_reduce_add_ps(_mm512_add_ps(sum0, sum1));
+  for (; d < hidden_size; ++d) {
+    sum += static_cast<float>(input[d]) * weight[d];
+  }
+  return sum;
+#else
   using input_vec = at::vec::Vectorized<input_t>;
   using float_vec = at::vec::Vectorized<float>;
 
@@ -62,12 +87,12 @@ float router_dot_float_weight(
     sum0 = sum0 + x0 * float_vec::loadu(weight + d);
     sum1 = sum1 + x1 * float_vec::loadu(weight + d + float_width);
   }
-
   float sum = vec_reduce_sum(sum0 + sum1);
   for (; d < hidden_size; ++d) {
     sum += static_cast<float>(input[d]) * weight[d];
   }
   return sum;
+#endif
 }
 
 template <typename input_t, typename weight_t>
