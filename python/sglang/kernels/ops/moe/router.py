@@ -350,6 +350,15 @@ def fused_moe_router_shim(
         len(hidden_states.shape) == 2
         and hidden_states.shape[1] == gating_output.shape[1]
     )
+    if hidden_states.device.type == "cpu":
+        return torch.ops.sgl_kernel.fused_moe_router_cpu(
+            hidden_states,
+            gating_output,
+            topk,
+            moe_softcapping,
+            correction_bias,
+        )
+
     bs, hidden_dim = hidden_states.shape
     num_experts = gating_output.shape[0]
 
