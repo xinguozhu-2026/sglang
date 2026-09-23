@@ -76,22 +76,44 @@ void chunk_kda_recurrent(
       }
       float* head_state = state + head * value_dim * key_dim;
       for (int64_t row = 0; row < value_dim; ++row) {
-        float projection = 0.0f;
         float* state_row = head_state + row * key_dim;
-        for (int64_t d = 0; d < key_dim; ++d) {
-          state_row[d] *= gate[d];
-          projection += state_row[d] * kf[d];
+        int64_t d = 0;
+        for (; d + 16 <= key_dim; d += 16) {
+          const __m512 decayed = _mm512_mul_ps(
+              _mm512_loadu_ps(state_row + d), _mm512_loadu_ps(gate.data() + d));
+          _mm512_storeu_ps(state_row + d, decayed);
         }
-        residual[row] = (static_cast<float>(v[v_offset + row]) - projection) * beta_value;
-        for (int64_t d = 0; d < key_dim; ++d) {
+        for (; d < key_dim; ++d) {
+          state_row[d] *= gate[d];
+        }
+      }
+
+      // State is fp32 row-major. BRGEMM computes the two VxK by Kx1 projections;
+      // direct AVX512 handles the rank-one update and arbitrary K tails.
+      alignas(64) float projection_scratch[32];
+      at::native::cpublas::brgemm(
+          value_dim, 1, key_dim, key_dim, 1, 32, false, head_state, kf.data(), projection_scratch);
+      for (int64_t row = 0; row < value_dim; ++row) {
+        residual[row] =
+            (static_cast<float>(v[v_offset + row]) - projection_scratch[row * 32]) * beta_value;
+        float* state_row = head_state + row * key_dim;
+        const __m512 residual_vec = _mm512_set1_ps(residual[row]);
+        int64_t d = 0;
+        for (; d + 16 <= key_dim; d += 16) {
+          const __m512 updated = _mm512_fmadd_ps(
+              residual_vec, _mm512_loadu_ps(kf.data() + d), _mm512_loadu_ps(state_row + d));
+          _mm512_storeu_ps(state_row + d, updated);
+        }
+        for (; d < key_dim; ++d) {
           state_row[d] += residual[row] * kf[d];
         }
-        float out = 0.0f;
-        for (int64_t d = 0; d < key_dim; ++d) {
-          out += state_row[d] * qf[d];
-        }
-        output[v_offset + row] = static_cast<scalar_t>(out * scale);
       }
+      at::native::cpublas::brgemm(
+          value_dim, 1, key_dim, key_dim, 1, 32, false, head_state, qf.data(), projection_scratch);
+      for (int64_t row = 0; row < value_dim; ++row) {
+        output[v_offset + row] = static_cast<scalar_t>(projection_scratch[row * 32] * scale);
+      }
+      at::native::cpublas::brgemm_release();
     }
   }
 }
