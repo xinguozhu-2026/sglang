@@ -106,6 +106,13 @@ def fused_dual_residual_rmsnorm(x, residual, weight1, weight2, eps, autotune=Fal
     assert x.shape == residual.shape and x.dtype == residual.dtype, (
         f"{x.shape=} {residual.shape=} {x.dtype=} {residual.dtype=}"
     )
+    if x.device.type == "cpu":
+        import sgl_kernel  # noqa: F401
+
+        return torch.ops.sgl_kernel.fused_dual_residual_rmsnorm_cpu(
+            x, residual, weight1, weight2, eps
+        )
+
     output, mid = torch.empty_like(x), torch.empty_like(x)
     bs, hidden_dim = x.shape
     if autotune:
@@ -169,6 +176,15 @@ def fused_rmsnorm_kernel(
 
 def fused_rmsnorm(x, weight, eps, autotune=False, inplace=False):
     assert len(x.shape) == 2
+    if x.device.type == "cpu":
+        import sgl_kernel  # noqa: F401
+
+        output = torch.ops.sgl_kernel.fused_rmsnorm_cpu(x, weight, eps)
+        if inplace:
+            x.copy_(output)
+            return x
+        return output
+
     if inplace:
         output = x
     else:
