@@ -370,7 +370,68 @@ struct NormReduceGeneric {
   }
 };
 
-// TODO: add generic avx512-bf16 path here
+#if defined(CPU_CAPABILITY_AVX512)
+template <typename scalar_t>
+inline std::tuple<__m512, __m512> load_avx512_reduced(const scalar_t* input) {
+  const __m512i packed = _mm512_loadu_si512(input);
+  if constexpr (std::is_same_v<scalar_t, at::BFloat16>) {
+    return {
+        CVT_BF16_TO_FP32(_mm512_extracti32x8_epi32(packed, 0)),
+        CVT_BF16_TO_FP32(_mm512_extracti32x8_epi32(packed, 1))};
+  } else {
+    return {
+        CVT_FP16_TO_FP32(_mm512_extracti64x4_epi64(packed, 0)),
+        CVT_FP16_TO_FP32(_mm512_extracti64x4_epi64(packed, 1))};
+  }
+}
+
+template <typename scalar_t>
+inline void store_avx512_reduced(scalar_t* output, __m512 low, __m512 high) {
+  if constexpr (std::is_same_v<scalar_t, at::BFloat16>) {
+    _mm512_storeu_si512(output, (__m512i)_mm512_cvtne2ps_pbh(high, low));
+  } else {
+    const __m256i low16 = _mm512_cvtps_ph(low, _MM_FROUND_TO_NEAREST_INT | _MM_FROUND_NO_EXC);
+    const __m256i high16 = _mm512_cvtps_ph(high, _MM_FROUND_TO_NEAREST_INT | _MM_FROUND_NO_EXC);
+    _mm256_storeu_si256(reinterpret_cast<__m256i*>(output), low16);
+    _mm256_storeu_si256(reinterpret_cast<__m256i*>(output + 16), high16);
+  }
+}
+
+template <typename scalar_t>
+void rmsnorm_avx512_row(
+    scalar_t* __restrict__ output,
+    const scalar_t* __restrict__ input,
+    const scalar_t* __restrict__ weight,
+    int64_t size,
+    float eps) {
+  __m512 sum = _mm512_setzero_ps();
+  int64_t d = 0;
+  for (; d + 32 <= size; d += 32) {
+    auto [low, high] = load_avx512_reduced(input + d);
+    sum = _mm512_fmadd_ps(low, low, sum);
+    sum = _mm512_fmadd_ps(high, high, sum);
+  }
+  float sum_tail = 0.f;
+  for (int64_t tail = d; tail < size; ++tail) {
+    const float value = static_cast<float>(input[tail]);
+    sum_tail += value * value;
+  }
+  const float row_scale =
+      1.f / std::sqrt((_mm512_reduce_add_ps(sum) + sum_tail) / static_cast<float>(size) + eps);
+  const __m512 scale = _mm512_set1_ps(row_scale);
+  for (d = 0; d + 32 <= size; d += 32) {
+    auto [low, high] = load_avx512_reduced(input + d);
+    auto [weight_low, weight_high] = load_avx512_reduced(weight + d);
+    store_avx512_reduced(
+        output + d, _mm512_mul_ps(_mm512_mul_ps(low, scale), weight_low),
+        _mm512_mul_ps(_mm512_mul_ps(high, scale), weight_high));
+  }
+  for (; d < size; ++d) {
+    output[d] = static_cast<scalar_t>(
+        static_cast<float>(input[d]) * row_scale * static_cast<float>(weight[d]));
+  }
+}
+#endif
 
 #define LAUNCH_PARALLEL_LOOP(...)                                    \
   at::parallel_for(0, p.rows(), 0, [&](int64_t begin, int64_t end) { \
@@ -432,6 +493,29 @@ void fused_add_norm4d_kernel_impl(
       scalar_t* __restrict__ residual_ptr = residual + p.output_offset(b, h, t);
       NormReduceGeneric<M, scalar_t, true>::apply(
           out + out_offset, input + p.input_offset(b, h, t), nullptr, residual_ptr, p, p.D));
+}
+
+template <typename scalar_t>
+void fused_dual_residual_rmsnorm_kernel_impl(
+    scalar_t* __restrict__ output,
+    scalar_t* __restrict__ mid,
+    const scalar_t* __restrict__ input,
+    const scalar_t* __restrict__ residual,
+    const NormParams& first,
+    const NormParams& second) {
+  at::parallel_for(0, first.rows(), 0, [&](int64_t begin, int64_t end) {
+    for (int64_t row = begin; row < end; ++row) {
+      const int64_t offset = row * first.D;
+      NormReduceGeneric<NormMode::RMSNorm, scalar_t, false>::apply(
+          mid + offset, input + offset, nullptr, nullptr, first, first.D);
+      for (int64_t d = 0; d < first.D; ++d) {
+        mid[offset + d] = static_cast<scalar_t>(
+            static_cast<float>(mid[offset + d]) + static_cast<float>(residual[offset + d]));
+      }
+      NormReduceGeneric<NormMode::RMSNorm, scalar_t, false>::apply(
+          output + offset, mid + offset, nullptr, nullptr, second, second.D);
+    }
+  });
 }
 
 template <NormMode M, typename scalar_t, bool copy_gate = false>
@@ -669,6 +753,91 @@ at::Tensor rmsnorm_cpu(at::Tensor& input, at::Tensor& weight, double eps) {
     norm4d_kernel_impl<NormMode::RMSNorm, scalar_t>(output.data_ptr<scalar_t>(), input.data_ptr<scalar_t>(), p);
   });
   return output;
+}
+
+at::Tensor fused_rmsnorm_cpu(const at::Tensor& input, const at::Tensor& weight, double eps) {
+  const auto st = input.scalar_type();
+  CHECK_INPUT_ND<2>(input);
+  CHECK_INPUT_SHAPE_DTYPE<false>(weight, {input.size(1)}, st);
+  TORCH_CHECK(input.is_contiguous(), "fused_rmsnorm_cpu expects contiguous input");
+
+  NormParams p{input, static_cast<float>(eps)};
+  p.weight = weight.data_ptr();
+  at::Tensor output = at::empty_like(input);
+  AT_DISPATCH_REDUCED_FLOATING_TYPES(st, "fused_rmsnorm_cpu", [&] {
+#if defined(CPU_CAPABILITY_AVX512)
+    at::parallel_for(0, input.size(0), 0, [&](int64_t begin, int64_t end) {
+      for (int64_t row = begin; row < end; ++row) {
+        rmsnorm_avx512_row(
+            output.data_ptr<scalar_t>() + row * input.size(1),
+            input.data_ptr<scalar_t>() + row * input.size(1),
+            weight.data_ptr<scalar_t>(),
+            input.size(1),
+            static_cast<float>(eps));
+      }
+    });
+#else
+    norm4d_kernel_impl<NormMode::RMSNorm, scalar_t>(output.data_ptr<scalar_t>(), input.data_ptr<scalar_t>(), p);
+#endif
+  });
+  return output;
+}
+
+std::tuple<at::Tensor, at::Tensor> fused_dual_residual_rmsnorm_cpu(
+    const at::Tensor& input,
+    const at::Tensor& residual,
+    const at::Tensor& weight1,
+    const at::Tensor& weight2,
+    double eps) {
+  const auto st = input.scalar_type();
+  CHECK_INPUT_ND<2>(input);
+  CHECK_EQ(input.sizes(), residual.sizes());
+  CHECK_EQ(st, residual.scalar_type());
+  CHECK_INPUT_SHAPE_DTYPE<false>(weight1, {input.size(1)}, st);
+  CHECK_INPUT_SHAPE_DTYPE<false>(weight2, {input.size(1)}, st);
+  TORCH_CHECK(input.is_contiguous() && residual.is_contiguous(), "fused dual RMSNorm expects contiguous inputs");
+
+  NormParams first{input, static_cast<float>(eps)};
+  first.weight = weight1.data_ptr();
+  NormParams second{input, static_cast<float>(eps)};
+  second.weight = weight2.data_ptr();
+  at::Tensor output = at::empty_like(input);
+  at::Tensor mid = at::empty_like(input);
+  AT_DISPATCH_REDUCED_FLOATING_TYPES(st, "fused_dual_residual_rmsnorm_cpu", [&] {
+#if defined(CPU_CAPABILITY_AVX512)
+    at::parallel_for(0, input.size(0), 0, [&](int64_t begin, int64_t end) {
+      for (int64_t row = begin; row < end; ++row) {
+        const int64_t offset = row * input.size(1);
+        rmsnorm_avx512_row(
+            mid.data_ptr<scalar_t>() + offset,
+            input.data_ptr<scalar_t>() + offset,
+            weight1.data_ptr<scalar_t>(),
+            input.size(1),
+            static_cast<float>(eps));
+        for (int64_t d = 0; d < input.size(1); ++d) {
+          mid.data_ptr<scalar_t>()[offset + d] = static_cast<scalar_t>(
+              static_cast<float>(mid.data_ptr<scalar_t>()[offset + d]) +
+              static_cast<float>(residual.data_ptr<scalar_t>()[offset + d]));
+        }
+        rmsnorm_avx512_row(
+            output.data_ptr<scalar_t>() + offset,
+            mid.data_ptr<scalar_t>() + offset,
+            weight2.data_ptr<scalar_t>(),
+            input.size(1),
+            static_cast<float>(eps));
+      }
+    });
+#else
+    fused_dual_residual_rmsnorm_kernel_impl<scalar_t>(
+        output.data_ptr<scalar_t>(),
+        mid.data_ptr<scalar_t>(),
+        input.data_ptr<scalar_t>(),
+        residual.data_ptr<scalar_t>(),
+        first,
+        second);
+#endif
+  });
+  return {output, mid};
 }
 
 // input : {batch_size, hidden_size}
