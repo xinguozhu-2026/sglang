@@ -199,6 +199,59 @@ class TestNorm:
             torch.testing.assert_close(ref_out, out, atol=atol, rtol=rtol)
 
 
+class TestGrokFusedRMSNorm:
+    @staticmethod
+    def _rmsnorm(x, weight, variance_epsilon=eps):
+        normalized = x.float() * torch.rsqrt(
+            x.float().pow(2).mean(dim=-1, keepdim=True) + variance_epsilon
+        )
+        return (normalized * weight.float()).to(x.dtype)
+
+    @pytest.mark.parametrize("dtype", DTYPES, ids=DTYPE_IDS)
+    @pytest.mark.parametrize("batch_size,hidden_size", [(1, 37), (7, 6144)])
+    def test_frontend_fused_rmsnorm(self, batch_size, hidden_size, dtype):
+        from sglang.kernels.ops.elementwise.elementwise import fused_rmsnorm
+
+        x = torch.randn([batch_size, hidden_size], dtype=dtype)
+        weight = torch.randn(hidden_size, dtype=dtype)
+        expected = self._rmsnorm(x, weight)
+        actual = fused_rmsnorm(x, weight, eps)
+        atol = rtol = precision[dtype]
+        torch.testing.assert_close(actual, expected, atol=atol, rtol=rtol)
+
+        inplace_input = x.clone()
+        actual_inplace = fused_rmsnorm(inplace_input, weight, eps, inplace=True)
+        assert actual_inplace.data_ptr() == inplace_input.data_ptr()
+        torch.testing.assert_close(actual_inplace, expected, atol=atol, rtol=rtol)
+
+    @pytest.mark.parametrize("dtype", DTYPES, ids=DTYPE_IDS)
+    @pytest.mark.parametrize("batch_size,hidden_size", [(1, 37), (7, 6144)])
+    def test_frontend_fused_dual_residual_rmsnorm(
+        self, batch_size, hidden_size, dtype
+    ):
+        from sglang.kernels.ops.elementwise.elementwise import (
+            fused_dual_residual_rmsnorm,
+        )
+
+        x = torch.randn([batch_size, hidden_size], dtype=dtype)
+        residual = torch.randn_like(x)
+        weight1 = torch.randn(hidden_size, dtype=dtype)
+        weight2 = torch.randn(hidden_size, dtype=dtype)
+
+        first_norm = self._rmsnorm(x, weight1)
+        expected_mid = (residual + first_norm).to(dtype)
+        expected_output = self._rmsnorm(expected_mid, weight2)
+        actual_output, actual_mid = fused_dual_residual_rmsnorm(
+            x, residual, weight1, weight2, eps
+        )
+
+        atol = rtol = precision[dtype]
+        torch.testing.assert_close(actual_mid, expected_mid, atol=atol, rtol=rtol)
+        torch.testing.assert_close(
+            actual_output, expected_output, atol=atol, rtol=rtol
+        )
+
+
 class TestFusedRMSNormGated:
     def _forward_native(
         self,
