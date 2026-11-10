@@ -40,6 +40,7 @@ test("legacy builders preserve existing platform commands", () => {
   for (const hardware of ["h200", "b200", "b300", "mi300x", "arc_b", "xeon"]) {
     for (const modelSize of ["e2b", "e4b", "12b", "31b", "26b-a4b"]) {
       for (const checkpoint of hardware === "xeon" ? ["standard"] : ["standard", "qat"]) {
+        if (hardware === "xeon" && modelSize === "12b") continue;
         for (const reasoning of ["enabled", "disabled"]) {
           for (const toolcall of ["enabled", "disabled"]) {
             for (const speculative of ["enabled", "disabled"]) {
@@ -52,7 +53,32 @@ test("legacy builders preserve existing platform commands", () => {
     }
   }
   assert.equal(createHash("sha256").update(JSON.stringify(entries)).digest("hex"),
-    "3e7d767ffb6ec35f76af2de94105e256c61367f548390e76515f88ae7b57499e");
+    "cdae95e0ed878d4c4894f9851ee0d356006b770d5b89fffc54adc431b2e05241");
+});
+
+test("Gemma 12B Xeon exposes only the full-checkpoint validated baseline", () => {
+  const selection = {
+    hardware: "xeon", modelSize: "12b", checkpoint: "standard",
+    reasoning: "enabled", toolcall: "enabled", speculative: "enabled",
+  };
+  const api = builder("gemma4", selection);
+  const command = api.generateCommand(selection);
+  assert.match(command, /--model google\/gemma-4-12B-it/);
+  assert.match(command, /--device cpu/);
+  assert.match(command, /--tp 6/);
+  assert.match(command, /--max-total-tokens 8192/);
+  assert.doesNotMatch(command, /--speculative|--reasoning-parser|--tool-call-parser|--mem-fraction/);
+  assert.equal(api.options.hardware.getDynamicItems(selection)
+    .find((item) => item.id === "xeon").disabled, false);
+  for (const key of ["reasoning", "toolcall", "speculative"]) {
+    assert.equal(api.options[key].condition(selection), false);
+  }
+  const switcher = builder("gemma4", { ...selection, hardware: "h200", checkpoint: "qat" });
+  switcher.handleRadioChange("hardware", "xeon");
+  assert.deepEqual(switcher.state(), {
+    ...selection, checkpoint: "standard",
+    reasoning: "disabled", toolcall: "disabled", speculative: "disabled",
+  });
 });
 
 test("Laguna Xeon disables and clears unvalidated options", () => {
