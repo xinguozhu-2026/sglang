@@ -7,7 +7,11 @@
 export const config = {
   modelName: "Ornith-1.0",
 
-  supportedHardware: ["h100", "h200"],
+  supportedHardware: ["h100", "h200", "xeon"],
+  hardware: [
+    { id: "xeon", label: "XEON", vram: "CPU", vendor: "cpu" },
+  ],
+  runModes: (s) => s.hw === "xeon" ? ["python"] : ["python", "docker"],
 
   variants: [
     { id: "397b", label: "397B", subtitle: "MoE" },
@@ -72,7 +76,9 @@ export const config = {
   // not baked into the cells. Both ids are registered in the SGLang parser
   // registries and match the model's Qwen3.5 chat template.
   playgroundFeatures: {
+    normalizeDeltas: (deltas, derived, base) => base.hw === "xeon" ? {} : deltas,
     parsers: {
+      showWhen: (s) => s.hw !== "xeon",
       items: [
         { id: "reasoning", label: "Reasoning Parser", flag: "--reasoning-parser qwen3" },
         { id: "toolCall",  label: "Tool Call Parser", flag: "--tool-call-parser qwen3_coder" },
@@ -81,6 +87,23 @@ export const config = {
   },
 
   cells: [
+    {
+      match: { hw: "xeon", variant: "9b", quant: "bf16", strategy: "balanced", nodes: "single" },
+      verified: false,
+      verificationStatus: "unverified",
+      env: [],
+      flags: [
+        "--model deepreinforce-ai/Ornith-1.0-9B",
+        "--device cpu",
+        "--disable-overlap-schedule",
+        "--served-model-name {{MODEL_NAME}}",
+        "--tp 6",
+        "--dtype bfloat16",
+        "--trust-remote-code",
+        "--host {{HOST_IP}}",
+        "--port {{PORT}}",
+      ],
+    },
     {
       match: { hw: "h200", variant: "397b", quant: "bf16", strategy: "balanced", nodes: "single" },
       env: [],
