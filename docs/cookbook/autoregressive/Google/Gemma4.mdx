@@ -97,6 +97,13 @@ For other installation methods, please refer to the [official SGLang installatio
 
 ### 3.1 Basic Configuration
 
+The **XEON + QAT** recipe for E2B uses the unquantized BF16 checkpoint at TP=4
+on Intel Xeon 6972P (GNR). This recipe passed a text-generation sanity check,
+not a dataset accuracy or multimodal evaluation. Parser overrides and
+speculative decoding are not enabled for this QAT CPU recipe. Use a
+CPU-enabled SGLang installation from the
+[installation guide](../../../docs/get-started/install).
+
 The Gemma 4 series offers models in various sizes and architectures, optimized for different hardware platforms including NVIDIA GPUs, AMD GPUs, and Intel Arc Pro B-Series GPUs(codename: BMG (Battlemage)), Xeon CPUs. The recommended launch configurations vary by hardware and model size.
 
 **Interactive Command Generator**: Use the configuration selector below to automatically generate the appropriate deployment command for your hardware platform and model variant.

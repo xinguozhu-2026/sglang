@@ -1,4 +1,5 @@
 export const Gemma4Deployment = () => {
+  const xeonQatSizes = ['e2b'];
   const options = {
     modelSize: {
       name: 'modelSize',
@@ -39,6 +40,7 @@ export const Gemma4Deployment = () => {
     reasoning: {
       name: 'reasoning',
       title: 'Reasoning Parser',
+      condition: (values) => !(values.hardware === 'xeon' && values.checkpoint === 'qat'),
       items: [
         { id: 'disabled', label: 'Disabled', default: false },
         { id: 'enabled', label: 'Enabled', default: true }
@@ -48,6 +50,7 @@ export const Gemma4Deployment = () => {
     toolcall: {
       name: 'toolcall',
       title: 'Tool Call Parser',
+      condition: (values) => !(values.hardware === 'xeon' && values.checkpoint === 'qat'),
       items: [
         { id: 'disabled', label: 'Disabled', default: false },
         { id: 'enabled', label: 'Enabled', default: true }
@@ -57,7 +60,8 @@ export const Gemma4Deployment = () => {
     speculative: {
       name: 'speculative',
       title: 'Speculative Decoding (MTP)',
-      condition: (values) => !['mi300x'].includes(values.hardware),
+      condition: (values) => values.hardware !== 'mi300x' &&
+        !(values.hardware === 'xeon' && values.checkpoint === 'qat'),
       items: [
         { id: 'disabled', label: 'Disabled', subtitle: 'Baseline', default: true },
         { id: 'enabled', label: 'Enabled', subtitle: 'Lower Latency', default: false }
@@ -123,6 +127,11 @@ export const Gemma4Deployment = () => {
     // the model-path suffix; TP/memory requirements match the standard checkpoints.
     const qatSuffix = values.checkpoint === 'qat' ? '-qat-q4_0-unquantized' : '';
     const modelPath = `${modelNames[modelSize]}${qatSuffix}`;
+
+    if (hardware === 'xeon' && values.checkpoint === 'qat') {
+      if (!xeonQatSizes.includes(modelSize)) return '# Error: This QAT model is not validated on Xeon.';
+      return `sglang serve --model ${modelPath} \\\n  --device cpu \\\n  --disable-overlap-schedule \\\n  --tp 4 \\\n  --dtype bfloat16 \\\n  --trust-remote-code \\\n  --host 0.0.0.0 --port 30000`;
+    }
 
     const mtpEnabled = values.speculative === 'enabled';
     if (mtpEnabled && modelSize === '26b-a4b' && hardware !== 'mi300x' && hardware !== 'xeon') {
@@ -249,7 +258,11 @@ export const Gemma4Deployment = () => {
         next.speculative = 'disabled';
       }
       if (optionName === 'hardware' && value === 'xeon') {
-        next.checkpoint = 'standard';
+        if (!xeonQatSizes.includes(next.modelSize)) next.checkpoint = 'standard';
+      }
+      if (next.hardware === 'xeon' && next.checkpoint === 'qat') {
+        if (!xeonQatSizes.includes(next.modelSize)) next.checkpoint = 'standard';
+        next.speculative = 'disabled';
       }
       return next;
     });
@@ -441,7 +454,7 @@ export const Gemma4Deployment = () => {
                   const isXeonQatLocked =
                     values.hardware === 'xeon' &&
                     option.name === 'checkpoint' &&
-                    item.id === 'qat';
+                    item.id === 'qat' && !xeonQatSizes.includes(values.modelSize);
                   const isXeon12bLocked =
                     values.hardware === 'xeon' &&
                     option.name === 'modelSize' &&
