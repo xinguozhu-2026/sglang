@@ -44,6 +44,12 @@ docker run --gpus all \
 
 **Interactive Command Generator**: Use the selector below to generate the deployment command for your hardware and parser configuration.
 
+The **XEON** recipe passed a text-generation sanity check on Intel Xeon 6972P
+(GNR) at TP=4. It does not establish dataset accuracy, vision support, parser
+coverage or MTP support on CPU. Build the CPU kernels from the same SGLang
+revision as the server, following the
+[CPU installation guide](../../../docs/hardware-platforms/cpu_server).
+
 import { InternS2PreviewDeployment } from "/src/snippets/autoregressive/intern-s2-preview-deployment.jsx";
 
 <InternS2PreviewDeployment />

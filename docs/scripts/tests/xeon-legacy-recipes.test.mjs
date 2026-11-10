@@ -101,3 +101,28 @@ test("Gemma Xeon QAT uses only the validated baseline", () => {
   const invalid = { hardware: "xeon", modelSize: "31b", checkpoint: "qat" };
   assert.match(builder("gemma4", invalid).generateCommand(invalid), /^# Error:/);
 });
+
+test("Intern-S2-Preview preserves GPU commands and gates CPU options", () => {
+  const entries = [];
+  for (const reasoning of ["enabled", "disabled"]) {
+    for (const toolcall of ["enabled", "disabled"]) {
+      for (const mtp of ["enabled", "disabled"]) {
+        const selection = { hardware: "h200", reasoning, toolcall, mtp };
+        entries.push([selection, builder("intern-s2-preview", selection).generateCommand()]);
+      }
+    }
+  }
+  assert.equal(createHash("sha256").update(JSON.stringify(entries)).digest("hex"),
+    "3067e357c77e45bcd7573298f7ab1bb224ad9eae8b10c2029a6befc67802e17a");
+  const selection = {
+    hardware: "xeon", reasoning: "enabled", toolcall: "enabled", mtp: "enabled",
+  };
+  const api = builder("intern-s2-preview", selection);
+  assert.match(api.generateCommand(), /--device cpu/);
+  assert.match(api.generateCommand(), /--tp 4/);
+  assert.doesNotMatch(api.generateCommand(), /--speculative|--reasoning-parser|--tool-call-parser/);
+  api.handleRadioChange("hardware", "xeon");
+  assert.deepEqual(api.state(), {
+    hardware: "xeon", reasoning: "disabled", toolcall: "disabled", mtp: "disabled",
+  });
+});

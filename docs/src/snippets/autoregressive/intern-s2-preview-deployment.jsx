@@ -5,6 +5,7 @@ export const InternS2PreviewDeployment = () => {
       title: 'Hardware Platform',
       items: [
         { id: 'h200', label: 'H200', default: true },
+        { id: 'xeon', label: 'XEON', default: false },
       ],
     },
     reasoning: {
@@ -64,11 +65,32 @@ export const InternS2PreviewDeployment = () => {
   }, []);
 
   const handleRadioChange = (optionName, value) => {
-    setValues((prev) => ({ ...prev, [optionName]: value }));
+    setValues((prev) => {
+      const next = { ...prev, [optionName]: value };
+      if (next.hardware === 'xeon') {
+        next.reasoning = 'disabled';
+        next.toolcall = 'disabled';
+        next.mtp = 'disabled';
+      }
+      return next;
+    });
   };
 
   const generateCommand = () => {
     const { reasoning, toolcall, mtp } = values;
+    if (values.hardware === 'xeon') {
+      return [
+        'sglang serve \\',
+        '  --model internLM/Intern-S2-Preview \\',
+        '  --device cpu \\',
+        '  --disable-overlap-schedule \\',
+        '  --tp 4 \\',
+        '  --dtype bfloat16 \\',
+        '  --trust-remote-code \\',
+        '  --host 0.0.0.0 \\',
+        '  --port 30000',
+      ].join('\n');
+    }
     const tpValue = 8;
 
     const flags = [];
@@ -141,7 +163,7 @@ export const InternS2PreviewDeployment = () => {
 
   return (
     <div style={containerStyle} className="not-prose">
-      {Object.entries(options).map(([key, option]) => (
+      {Object.entries(options).filter(([key]) => values.hardware !== 'xeon' || key === 'hardware').map(([key, option]) => (
         <div key={key} style={cardStyle}>
           <div style={titleStyle}>{option.title}</div>
           <div style={itemsStyle}>
