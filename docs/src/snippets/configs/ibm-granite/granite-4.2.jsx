@@ -3,7 +3,11 @@ export const config = {
 
   latencyPercentile: "P50",
 
-  supportedHardware: ["h200", "b200"],
+  supportedHardware: ["h200", "b200", "xeon"],
+  hardware: [
+    { id: "xeon", label: "XEON", vram: "CPU", vendor: "cpu" },
+  ],
+  runModes: (s) => s.hw === "xeon" ? ["python"] : ["python", "docker"],
 
   variants: [
     { id: "3b", label: "3B", subtitle: "Dense" },
@@ -63,18 +67,22 @@ export const config = {
   },
 
   playgroundFeatures: {
+    normalizeDeltas: (deltas, derived, base) => base.hw === "xeon" ? {} : deltas,
     attention: {
+      showWhen: (s) => s.hw !== "xeon",
       knobs: [
         { id: "tp", label: "TP", values: [null, 1, 2, 4, 8] },
       ],
     },
     parsers: {
+      showWhen: (s) => s.hw !== "xeon",
       items: [
         { id: "reasoning", label: "Reasoning Parser", flag: "--reasoning-parser auto" },
         { id: "toolCall", label: "Tool Call Parser", flag: "--tool-call-parser auto" },
       ],
     },
     pdDisagg: {
+      showWhen: (s) => s.hw !== "xeon",
       modes: [
         { id: "off", label: "Off" },
         { id: "prefill", label: "Prefill role" },
@@ -87,6 +95,7 @@ export const config = {
       ibDevices: [{ id: "auto", label: "Auto" }, "mlx5_0", "mlx5_7"],
     },
     hicache: {
+      showWhen: (s) => s.hw !== "xeon",
       backends: [
         { id: null, label: "Auto" },
         { id: "file", label: "File" },
@@ -104,6 +113,21 @@ export const config = {
   },
 
   cells: [
+    {
+      match: { hw: "xeon", variant: "3b", quant: "bf16", strategy: "balanced", nodes: "single" },
+      verified: false,
+      verificationStatus: "unverified",
+      env: [],
+      flags: [
+        "--model {{MODEL_NAME}}",
+        "--device cpu",
+        "--disable-overlap-schedule",
+        "--tp 6",
+        "--dtype bfloat16",
+        "--host {{HOST_IP}}",
+        "--port {{PORT}}",
+      ],
+    },
     {
       match: { hw: "h200", variant: "3b", quant: "bf16", strategy: "balanced", nodes: "single" },
       verified: true,
