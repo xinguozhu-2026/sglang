@@ -186,23 +186,6 @@ sgl-eval run aime25 \\
   // Cells: (h200 × {bf16,fp8,int4} + b300/gb300 × {bf16,fp8,nvfp4,int4}) × {low-latency, high-throughput}.
   // Draft model precision always matches the target's.
   cells: [
-    {
-      match: { hw: "xeon", variant: "default", quant: "bf16", strategy: "high-throughput", nodes: "single" },
-      verified: false,
-      verificationStatus: "unverified",
-      env: [],
-      flags: [
-        "--model {{MODEL_NAME}}",
-        "--device cpu",
-        "--disable-overlap-schedule",
-        "--tp 4",
-        "--dtype bfloat16",
-        "--trust-remote-code",
-        "--host {{HOST_IP}}",
-        "--port {{PORT}}",
-      ],
-    },
-
     // ══════════════ NVIDIA Hopper H200 (8-GPU HGX) — BF16 / FP8 / INT4 — VERIFIED ══════════════
     // All 6 cells ran on 8×H200 with full-GSM8K accuracy (laguna-xs21-benchmarks.jsx).
     // Dense auto-selects fa3 on Hopper (no flag). LL pins fa3 (DFlash-safe on Hopper;
@@ -615,6 +598,22 @@ sgl-eval run aime25 \\
         "--speculative-draft-model-path poolside/Laguna-XS-2.1-DFlash-INT4",
         "--page-size 1",
         "--mem-fraction-static 0.7",
+        "--host {{HOST_IP}}",
+        "--port {{PORT}}",
+      ],
+    },
+    {
+      match: { hw: "xeon", variant: "default", quant: "bf16", strategy: "high-throughput", nodes: "single" },
+      verified: false,
+      verificationStatus: "unverified",
+      env: [],
+      flags: [
+        "--model {{MODEL_NAME}}",
+        "--device cpu",
+        "--disable-overlap-schedule",
+        "--tp 4",
+        "--dtype bfloat16",
+        "--trust-remote-code",
         "--host {{HOST_IP}}",
         "--port {{PORT}}",
       ],
