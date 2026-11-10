@@ -68,7 +68,7 @@ for (const [path, digest] of Object.entries(commandDigests)) {
       (path !== "Qwen/qwen3.8-27b.jsx" || cell.match.quant === "fp8"));
     assert.ok(cells.length > 0);
     if (path === "IFM/jais-3.jsx") {
-      assert.deepEqual(cells.map((cell) => cell.match.variant).sort(), ["3.7b", "32b", "7b"]);
+      assert.deepEqual(cells.map((cell) => cell.match.variant).sort(), ["0.9b", "3.7b", "32b", "7b"]);
     }
     if (path === "IFM/k2-horizon.jsx") {
       assert.deepEqual(cells.map((cell) => cell.match.variant).sort(), ["0.9b", "3.7b", "32b", "7b"]);
