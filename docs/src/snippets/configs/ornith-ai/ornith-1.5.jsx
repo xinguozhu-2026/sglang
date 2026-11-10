@@ -77,23 +77,6 @@ export const config = {
 
   cells: [
     {
-      match: { hw: "xeon", variant: "9b", quant: "bf16", strategy: "balanced", nodes: "single" },
-      verified: false,
-      verificationStatus: "unverified",
-      env: [],
-      flags: [
-        "--model ornith-ai/Ornith-1.5-9B",
-        "--device cpu",
-        "--disable-overlap-schedule",
-        "--served-model-name {{MODEL_NAME}}",
-        "--tp 6",
-        "--dtype bfloat16",
-        "--trust-remote-code",
-        "--host {{HOST_IP}}",
-        "--port {{PORT}}",
-      ],
-    },
-    {
       match: { hw: "h100", variant: "122b", quant: "bf16", strategy: "balanced", nodes: "single" },
       env: [],
       flags: [
@@ -254,6 +237,23 @@ export const config = {
         "--mem-fraction-static 0.85",
         "--tool-call-parser qwen3_coder",
         "--reasoning-parser qwen3",
+        "--host {{HOST_IP}}",
+        "--port {{PORT}}",
+      ],
+    },
+    {
+      match: { hw: "xeon", variant: "9b", quant: "bf16", strategy: "balanced", nodes: "single" },
+      verified: false,
+      verificationStatus: "unverified",
+      env: [],
+      flags: [
+        "--model ornith-ai/Ornith-1.5-9B",
+        "--device cpu",
+        "--disable-overlap-schedule",
+        "--served-model-name {{MODEL_NAME}}",
+        "--tp 6",
+        "--dtype bfloat16",
+        "--trust-remote-code",
         "--host {{HOST_IP}}",
         "--port {{PORT}}",
       ],
