@@ -111,10 +111,16 @@ for (const [path, digest] of Object.entries(commandDigests)) {
         assert.equal(config.playgroundFeatures.speculative.showWhen(selection), false);
       }
       if (path === "poolside/laguna-s21.jsx") {
-        assert.equal(cells.length, 1);
-        assert.equal(cell.match.quant, "fp8");
+        assert.equal(cells.length, 2);
+        assert.deepEqual(cells.map((item) => item.match.quant).sort(), ["bf16", "fp8"]);
         assert.match(command, /--tp 4/);
         assert.match(command, /--max-total-tokens 8192/);
+        if (cell.match.quant === "bf16") {
+          assert.match(command, /--default-chat-template-kwargs '\{"enable_thinking":false\}'/);
+          assert.match(command, /--model poolside\/Laguna-S-2.1 /);
+        } else {
+          assert.doesNotMatch(command, /--default-chat-template-kwargs/);
+        }
         assert.doesNotMatch(command, /SGLANG_SHARED_EXPERT_TP1|--reasoning-parser|--tool-call-parser/);
         assert.equal(config.playgroundFeatures.attention.showWhen(selection), false);
         assert.equal(config.playgroundFeatures.parsers.showWhen(selection), false);

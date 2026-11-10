@@ -1,6 +1,6 @@
 ---
 title: Laguna-S-2.1
-description: "Deploy poolside's Laguna-S-2.1 — a 118B hybrid-SWA Mixture-of-Experts model (8B active) for agentic coding — with SGLang on NVIDIA H200, B300, and GB300 in BF16, FP8, NVFP4, and INT4, or Intel Xeon CPUs in FP8."
+description: "Deploy poolside's Laguna-S-2.1 — a 118B hybrid-SWA Mixture-of-Experts model (8B active) for agentic coding — with SGLang on NVIDIA H200, B300, and GB300 in BF16, FP8, NVFP4, and INT4, or Intel Xeon CPUs in BF16 and FP8."
 tag: NEW
 ---
 
@@ -50,7 +50,7 @@ Pick your hardware + quantization + strategy to generate the launch command. The
 
 On the 8-GPU HGX platforms (H200 / B300) all quantizations run `--tp 8`. The 4-GPU GB300 node runs `--tp 4` throughout. NVFP4 is Blackwell-only (B300 / GB300 only).
 
-**Intel Xeon CPU:** Select **XEON**, **FP8**, and **High-throughput** for the Python-only, non-speculative TP4 recipe. Basic text generation passed on Intel Xeon 6972P (Granite Rapids) using upstream SGLang `626b95d`, matching CPU kernels, and checkpoint `06d71e91`. The recipe uses BF16 computation and an 8192-token KV-cache budget. TP6 reached readiness but produced garbled output; use TP4. Other precisions, parser overrides, DFlash, images, long-context behavior, dataset accuracy, and performance are not validated on CPU. This is a basic-generation check, not a fully benchmark-verified cell.
+**Intel Xeon CPU:** Select **XEON**, **BF16** or **FP8**, and **High-throughput** for a Python-only, non-speculative TP4 recipe. Basic text generation passed on Intel Xeon 6972P (Granite Rapids) using unpatched upstream SGLang `626b95d`, matching CPU kernels, and checkpoints `0f573140` (BF16) and `06d71e91` (FP8). Both recipes use BF16 computation and an 8192-token KV-cache budget. **BF16 requires the checkpoint's official non-thinking setting**, emitted as `--default-chat-template-kwargs '{"enable_thinking":false}'`; default-thinking replies were coherent but did not complete within the retained short check. TP6 produced garbled output; use TP4. Other precisions, parser overrides, DFlash, images, long-context behavior, dataset accuracy, and performance are not validated on CPU. These are basic-generation checks, not fully benchmark-verified cells.
 
 import { Deployment } from "/src/snippets/_deployment.jsx";
 import { config }     from "/src/snippets/configs/poolside/laguna-s21.jsx";
