@@ -114,6 +114,21 @@ export const config = {
 
   cells: [
     {
+      match: { hw: "xeon", variant: "30b", quant: "bf16", strategy: "balanced", nodes: "single" },
+      verified: false,
+      verificationStatus: "unverified",
+      env: [],
+      flags: [
+        "--model {{MODEL_NAME}}",
+        "--device cpu",
+        "--disable-overlap-schedule",
+        "--tp 6",
+        "--dtype bfloat16",
+        "--host {{HOST_IP}}",
+        "--port {{PORT}}",
+      ],
+    },
+    {
       match: { hw: "xeon", variant: "8b", quant: "bf16", strategy: "balanced", nodes: "single" },
       verified: false,
       verificationStatus: "unverified",
