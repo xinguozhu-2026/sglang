@@ -81,6 +81,46 @@ test("Gemma 12B Xeon exposes only the full-checkpoint validated baseline", () =>
   });
 });
 
+test("GLM4.6V preserves GPU commands and exposes only the validated Flash CPU baseline", () => {
+  const entries = [];
+  for (const hardware of ["b200", "b300", "h100", "h200", "mi300x", "mi325x", "mi355x"]) {
+    for (const modelsize of ["106b", "9b"]) {
+      for (const quantization of ["bf16", "fp8"]) {
+        for (const reasoning of ["enabled", "disabled"]) {
+          for (const toolcall of ["enabled", "disabled"]) {
+            const selection = { hardware, modelsize, quantization, reasoning, toolcall };
+            entries.push([selection, builder("glm-46v", selection).generateCommand()]);
+          }
+        }
+      }
+    }
+  }
+  assert.equal(createHash("sha256").update(JSON.stringify(entries)).digest("hex"),
+    "babf679f8b7af75024b886ae174097eb134a2f668c32a85d1ed42595d303195f");
+  const selection = {
+    hardware: "xeon", modelsize: "9b", quantization: "bf16",
+    reasoning: "enabled", toolcall: "enabled",
+  };
+  const api = builder("glm-46v", selection);
+  const command = api.generateCommand();
+  assert.match(command, /--model zai-org\/GLM-4.6V-Flash/);
+  assert.match(command, /--device cpu/);
+  assert.match(command, /--tp 2/);
+  assert.match(command, /--max-total-tokens 8192/);
+  assert.doesNotMatch(command, /CUDA|--reasoning-parser|--tool-call-parser|--mm-enable/);
+  for (const key of ["reasoning", "toolcall"]) {
+    assert.equal(api.options[key].condition(selection), false);
+  }
+  const switcher = builder("glm-46v", { ...selection, hardware: "b200", modelsize: "106b", quantization: "fp8" });
+  switcher.handleRadioChange("hardware", "xeon");
+  assert.deepEqual(switcher.state(), {
+    ...selection, reasoning: "disabled", toolcall: "disabled",
+  });
+  for (const delta of [{ modelsize: "106b" }, { quantization: "fp8" }]) {
+    assert.match(builder("glm-46v", { ...selection, ...delta }).generateCommand(), /^# Error:/);
+  }
+});
+
 test("GLM-OCR adds only the validated CPU baseline and preserves GPU commands", () => {
   for (const hardware of ["h100", "h200", "b200"]) {
     for (const strategy of [[], ["mtp"]]) {

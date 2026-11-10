@@ -11,7 +11,8 @@ export const GLM46VDeployment = () => {
         { id: 'h200', label: 'H200', default: false },
         { id: 'mi300x', label: 'MI300X', default: false },
         { id: 'mi325x', label: 'MI325X', default: false },
-        { id: 'mi355x', label: 'MI355X', default: false }
+        { id: 'mi355x', label: 'MI355X', default: false },
+        { id: 'xeon', label: 'XEON', default: false }
       ]
     },
     modelsize: {
@@ -33,6 +34,7 @@ export const GLM46VDeployment = () => {
     reasoning: {
       name: 'reasoning',
       title: 'Reasoning Parser',
+      condition: (values) => values.hardware !== 'xeon',
       items: [
         { id: 'enabled', label: 'Enabled', default: true },
         { id: 'disabled', label: 'Disabled', default: false }
@@ -41,6 +43,7 @@ export const GLM46VDeployment = () => {
     toolcall: {
       name: 'toolcall',
       title: 'Tool Call Parser',
+      condition: (values) => values.hardware !== 'xeon',
       items: [
         { id: 'enabled', label: 'Enabled', default: true },
         { id: 'disabled', label: 'Disabled', default: false }
@@ -81,12 +84,28 @@ export const GLM46VDeployment = () => {
   }, []);
 
   const handleRadioChange = (optionName, value) => {
-    setValues(prev => ({ ...prev, [optionName]: value }));
+    setValues(prev => {
+      const next = { ...prev, [optionName]: value };
+      if (next.hardware === 'xeon') {
+        next.modelsize = '9b';
+        next.quantization = 'bf16';
+        next.reasoning = 'disabled';
+        next.toolcall = 'disabled';
+      }
+      return next;
+    });
   };
 
   // Generate command
   const generateCommand = () => {
     const { hardware, modelsize, quantization, reasoning, toolcall } = values;
+
+    if (hardware === 'xeon') {
+      if (modelsize !== '9b' || quantization !== 'bf16') {
+        return '# Error: Only GLM-4.6V-Flash BF16 is validated on Xeon.';
+      }
+      return 'python -m sglang.launch_server \\\n  --model zai-org/GLM-4.6V-Flash \\\n  --device cpu \\\n  --disable-overlap-schedule \\\n  --tp 2 \\\n  --dtype bfloat16 \\\n  --trust-remote-code \\\n  --max-total-tokens 8192 \\\n  --host 0.0.0.0 --port 30000';
+    }
 
     // Model configurations
     const modelConfigs = {
@@ -171,7 +190,8 @@ export const GLM46VDeployment = () => {
 
   return (
     <div style={containerStyle} className="not-prose">
-      {Object.entries(options).map(([key, option]) => (
+      {Object.entries(options).filter(([, option]) =>
+        !option.condition || option.condition(values)).map(([key, option]) => (
         <div key={key} style={cardStyle}>
           <div style={titleStyle}>{option.title}</div>
           <div style={itemsStyle}>
@@ -190,9 +210,12 @@ export const GLM46VDeployment = () => {
             ) : (
               option.items.map(item => {
                 const isChecked = values[option.name] === item.id;
+                const isDisabled = values.hardware === 'xeon' &&
+                  ((option.name === 'modelsize' && item.id !== '9b') ||
+                   (option.name === 'quantization' && item.id !== 'bf16'));
                 return (
-                  <label key={item.id} style={{ ...labelBaseStyle, ...(isChecked ? checkedStyle : {}) }}>
-                    <input type="radio" name={option.name} value={item.id} checked={isChecked} onChange={() => handleRadioChange(option.name, item.id)} style={{ display: 'none' }} />
+                  <label key={item.id} style={{ ...labelBaseStyle, ...(isChecked ? checkedStyle : {}), ...(isDisabled ? disabledStyle : {}) }}>
+                    <input type="radio" name={option.name} value={item.id} checked={isChecked} disabled={isDisabled} onChange={() => handleRadioChange(option.name, item.id)} style={{ display: 'none' }} />
                     {item.label}
                     {item.subtitle && <small style={{ ...subtitleStyle, color: isChecked ? 'rgba(255,255,255,0.85)' : 'inherit' }}>{item.subtitle}</small>}
                   </label>
