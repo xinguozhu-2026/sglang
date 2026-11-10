@@ -236,22 +236,6 @@ sgl-eval run gsm8k \\
 
   cells: [
     {
-      match: { hw: "xeon", variant: "32b", quant: "bf16", strategy: "balanced", nodes: "single" },
-      verified: false,
-      verificationStatus: "unverified",
-      env: [],
-      flags: [
-        "--model {{MODEL_NAME}}",
-        "--device cpu",
-        "--disable-overlap-schedule",
-        "--tp 6",
-        "--dtype bfloat16",
-        "--trust-remote-code",
-        "--host {{HOST_IP}}",
-        "--port {{PORT}}",
-      ],
-    },
-    {
       match: { hw: "h100", variant: "0.9b", quant: "bf16", strategy: "balanced", nodes: "single" },
       verified: true,
       env: [],
@@ -338,6 +322,22 @@ sgl-eval run gsm8k \\
         "--attention-backend fa3",
         "--model-loader-extra-config '{\"enable_multithread_load\":false}'",
         "--reasoning-parser k2_horizon",
+        "--host {{HOST_IP}}",
+        "--port {{PORT}}",
+      ],
+    },
+    {
+      match: { hw: "xeon", variant: "32b", quant: "bf16", strategy: "balanced", nodes: "single" },
+      verified: false,
+      verificationStatus: "unverified",
+      env: [],
+      flags: [
+        "--model {{MODEL_NAME}}",
+        "--device cpu",
+        "--disable-overlap-schedule",
+        "--tp 6",
+        "--dtype bfloat16",
+        "--trust-remote-code",
         "--host {{HOST_IP}}",
         "--port {{PORT}}",
       ],
