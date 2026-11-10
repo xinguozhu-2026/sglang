@@ -1,5 +1,5 @@
 export const Gemma4Deployment = () => {
-  const xeonQatSizes = ['e2b'];
+  const xeonQatSizes = ['e2b', 'e4b'];
   const options = {
     modelSize: {
       name: 'modelSize',
