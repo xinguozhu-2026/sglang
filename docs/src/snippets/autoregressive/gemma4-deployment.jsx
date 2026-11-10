@@ -1,5 +1,5 @@
 export const Gemma4Deployment = () => {
-  const xeonQatSizes = ['e2b', 'e4b'];
+  const xeonQatSizes = ['e2b', 'e4b', '31b'];
   const options = {
     modelSize: {
       name: 'modelSize',
@@ -134,7 +134,8 @@ export const Gemma4Deployment = () => {
 
     if (hardware === 'xeon' && values.checkpoint === 'qat') {
       if (!xeonQatSizes.includes(modelSize)) return '# Error: This QAT model is not validated on Xeon.';
-      return `sglang serve --model ${modelPath} \\\n  --device cpu \\\n  --disable-overlap-schedule \\\n  --tp 4 \\\n  --dtype bfloat16 \\\n  --trust-remote-code \\\n  --host 0.0.0.0 --port 30000`;
+      const tokenLimit = modelSize === '31b' ? ' \\\n  --max-total-tokens 8192' : '';
+      return `sglang serve --model ${modelPath} \\\n  --device cpu \\\n  --disable-overlap-schedule \\\n  --tp 4 \\\n  --dtype bfloat16 \\\n  --trust-remote-code${tokenLimit} \\\n  --host 0.0.0.0 --port 30000`;
     }
 
     if (hardware === 'xeon' && modelSize === '12b') {

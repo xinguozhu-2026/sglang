@@ -128,7 +128,7 @@ test("Laguna Xeon disables and clears unvalidated options", () => {
 });
 
 test("Gemma Xeon QAT uses only the validated baseline", () => {
-  for (const modelSize of ["e2b", "e4b"]) {
+  for (const modelSize of ["e2b", "e4b", "31b"]) {
     const selection = {
       hardware: "xeon", modelSize, checkpoint: "qat",
       reasoning: "enabled", toolcall: "enabled", speculative: "enabled",
@@ -138,6 +138,10 @@ test("Gemma Xeon QAT uses only the validated baseline", () => {
     assert.match(command, /--device cpu/);
     assert.match(command, /--tp 4/);
     assert.match(command, /-qat-q4_0-unquantized/);
+    if (modelSize === "31b") {
+      assert.match(command, /--model google\/gemma-4-31B-it-qat-q4_0-unquantized/);
+      assert.match(command, /--max-total-tokens 8192/);
+    }
     assert.doesNotMatch(command, /--speculative|--reasoning-parser|--tool-call-parser/);
     for (const key of ["reasoning", "toolcall", "speculative"]) {
       assert.equal(api.options[key].condition(selection), false);
@@ -147,7 +151,7 @@ test("Gemma Xeon QAT uses only the validated baseline", () => {
     assert.equal(switcher.state().checkpoint, "qat");
     assert.equal(switcher.state().speculative, "disabled");
   }
-  const invalid = { hardware: "xeon", modelSize: "31b", checkpoint: "qat" };
+  const invalid = { hardware: "xeon", modelSize: "12b", checkpoint: "qat" };
   assert.match(builder("gemma4", invalid).generateCommand(invalid), /^# Error:/);
 });
 
