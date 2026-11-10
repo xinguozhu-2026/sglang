@@ -65,6 +65,9 @@ for (const [path, digest] of Object.entries(commandDigests)) {
   test(`${path}: Xeon recipes are CPU-only and cannot inherit Playground overrides`, () => {
     const cells = config.cells.filter((cell) => cell.match.hw === "xeon");
     assert.ok(cells.length > 0);
+    if (path === "IFM/jais-3.jsx") {
+      assert.deepEqual(cells.map((cell) => cell.match.variant).sort(), ["3.7b", "32b"]);
+    }
     for (const cell of cells) {
       const selection = { ...cell.match, ...overlays };
       assert.deepEqual(modes(config, selection), ["python"]);
