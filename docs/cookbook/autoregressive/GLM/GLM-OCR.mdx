@@ -10,7 +10,7 @@ metatags:
 
 The model integrates the CogViT visual encoder pre-trained on large-scale image–text data, a lightweight cross-modal connector with efficient token downsampling, and a GLM-0.5B language decoder. Combined with a two-stage pipeline of layout analysis and parallel recognition based on PP-DocLayout-V3, GLM-OCR delivers robust and high-quality OCR performance across diverse document layouts.
 
-**Hardware Support:** NVIDIA B200/H100/H200
+**Hardware Support:** NVIDIA B200/H100/H200; Intel Xeon CPUs (basic text generation)
 
 **Key Features:**
 
@@ -38,6 +38,10 @@ This section provides deployment configurations optimized for different hardware
 import { GLMOCRDeployment } from '/src/snippets/autoregressive/glm-ocr-deployment.jsx'
 
 <GLMOCRDeployment />
+
+The Xeon recipe passed a text-only basic-generation check on Intel Xeon GNR
+using upstream SGLang without a runtime patch. Image/OCR quality, MTP,
+performance and dataset accuracy were not validated on CPU.
 
 ### 3.2 Configuration Tips
 

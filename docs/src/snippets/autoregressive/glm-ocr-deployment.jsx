@@ -7,13 +7,15 @@ export const GLMOCRDeployment = () => {
       items: [
         { id: 'h100', label: 'H100', default: true },
         { id: 'h200', label: 'H200', default: false },
-        { id: 'b200', label: 'B200', default: false }
+        { id: 'b200', label: 'B200', default: false },
+        { id: 'xeon', label: 'XEON', default: false }
       ]
     },
     strategy: {
       name: 'strategy',
       title: 'Deployment Strategy',
       type: 'checkbox',
+      condition: (values) => values.hardware !== 'xeon',
       items: [
         { id: 'mtp', label: 'MTP', subtitle: 'Multi-token Prediction', default: true }
       ]
@@ -53,7 +55,11 @@ export const GLMOCRDeployment = () => {
   }, []);
 
   const handleRadioChange = (optionName, value) => {
-    setValues(prev => ({ ...prev, [optionName]: value }));
+    setValues(prev => {
+      const next = { ...prev, [optionName]: value };
+      if (next.hardware === 'xeon') next.strategy = [];
+      return next;
+    });
   };
 
   const handleCheckboxChange = (optionName, itemId, isChecked) => {
@@ -73,6 +79,10 @@ export const GLMOCRDeployment = () => {
     const strategyArray = Array.isArray(strategy) ? strategy : [];
 
     const modelName = 'zai-org/GLM-OCR';
+
+    if (values.hardware === 'xeon') {
+      return `sglang serve --model ${modelName} \\\n  --device cpu \\\n  --disable-overlap-schedule \\\n  --tp 6 \\\n  --dtype bfloat16 \\\n  --trust-remote-code \\\n  --max-total-tokens 8192 \\\n  --host 0.0.0.0 --port 30000`;
+    }
 
     let cmd = 'SGLANG_USE_CUDA_IPC_TRANSPORT=1 python -m sglang.launch_server \\\n';
     cmd += `  --model ${modelName}`;
@@ -100,7 +110,8 @@ export const GLMOCRDeployment = () => {
 
   return (
     <div style={containerStyle} className="not-prose">
-      {Object.entries(options).map(([key, option]) => (
+      {Object.entries(options).filter(([, option]) =>
+        !option.condition || option.condition(values)).map(([key, option]) => (
         <div key={key} style={cardStyle}>
           <div style={titleStyle}>{option.title}</div>
           <div style={itemsStyle}>

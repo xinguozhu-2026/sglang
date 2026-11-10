@@ -81,6 +81,29 @@ test("Gemma 12B Xeon exposes only the full-checkpoint validated baseline", () =>
   });
 });
 
+test("GLM-OCR adds only the validated CPU baseline and preserves GPU commands", () => {
+  for (const hardware of ["h100", "h200", "b200"]) {
+    for (const strategy of [[], ["mtp"]]) {
+      const selection = { hardware, strategy };
+      const expected = "SGLANG_USE_CUDA_IPC_TRANSPORT=1 python -m sglang.launch_server \\\n  --model zai-org/GLM-OCR" +
+        (strategy.length ? " \\\n  --speculative-algorithm EAGLE \\\n  --speculative-num-steps 3 \\\n  --speculative-eagle-topk 1 \\\n  --speculative-num-draft-tokens 4" : "");
+      assert.equal(builder("glm-ocr", selection).generateCommand(), expected);
+    }
+  }
+  const selection = { hardware: "xeon", strategy: ["mtp"] };
+  const api = builder("glm-ocr", selection);
+  const command = api.generateCommand();
+  assert.match(command, /--model zai-org\/GLM-OCR/);
+  assert.match(command, /--device cpu/);
+  assert.match(command, /--tp 6/);
+  assert.match(command, /--max-total-tokens 8192/);
+  assert.doesNotMatch(command, /CUDA|--speculative/);
+  assert.equal(api.options.strategy.condition(selection), false);
+  const switcher = builder("glm-ocr", { ...selection, hardware: "h100" });
+  switcher.handleRadioChange("hardware", "xeon");
+  assert.deepEqual(switcher.state(), { hardware: "xeon", strategy: [] });
+});
+
 test("Laguna Xeon disables and clears unvalidated options", () => {
   const selection = {
     hardware: "xeon", quantization: "bf16",
