@@ -168,21 +168,6 @@ export const config = {
   // `qwen3` reasoning parser its `<think>` template needs.
   cells: [
     {
-      match: { hw: "xeon", variant: "default", quant: "bf16", nodes: "single" },
-      verified: false,
-      verificationStatus: "unverified",
-      env: ["SGLANG_USE_CPU_ENGINE=1"],
-      flags: [
-        "--model-path {{MODEL_NAME}}",
-        "--device cpu",
-        "--tp 6",
-        "--disable-overlap-schedule",
-        "--default-chat-template-kwargs '{\"enable_thinking\":false}'",
-        "--host {{HOST_IP}}",
-        "--port {{PORT}}",
-      ],
-    },
-    {
       match: { hw: "h200", variant: "default", quant: "bf16", nodes: "single" },
       verified: true,
       env: [],
@@ -249,6 +234,21 @@ export const config = {
         "--tool-call-parser minicpm5",
         "--mem-fraction-static 0.30",
         "--cuda-graph-max-bs-decode 128",
+        "--host {{HOST_IP}}",
+        "--port {{PORT}}",
+      ],
+    },
+    {
+      match: { hw: "xeon", variant: "default", quant: "bf16", nodes: "single" },
+      verified: false,
+      verificationStatus: "unverified",
+      env: ["SGLANG_USE_CPU_ENGINE=1"],
+      flags: [
+        "--model-path {{MODEL_NAME}}",
+        "--device cpu",
+        "--disable-overlap-schedule",
+        "--tp 6",
+        "--default-chat-template-kwargs '{\"enable_thinking\":false}'",
         "--host {{HOST_IP}}",
         "--port {{PORT}}",
       ],
