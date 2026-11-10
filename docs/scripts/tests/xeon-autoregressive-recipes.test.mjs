@@ -104,6 +104,7 @@ for (const [path, digest] of Object.entries(commandDigests)) {
         assert.equal(cells.length, 1);
         assert.equal(cell.match.quant, "bf16");
         assert.equal(cell.match.strategy, "high-throughput");
+        assert.match(command, /SGLANG_USE_CPU_ENGINE=1/);
         assert.match(command, /--model internlm\/Intern-S2-Mobius/);
         assert.match(command, /--tp 4/);
         assert.match(command, /--moe-runner-backend triton/);

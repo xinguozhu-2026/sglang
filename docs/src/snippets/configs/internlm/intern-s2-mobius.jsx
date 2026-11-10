@@ -303,7 +303,7 @@ sgl-eval run gpqa \\
       verified: false,
       verificationStatus: "unverified",
       accuracy: { gsm8k_pct: null, gpqa_pct: null },
-      env: [],
+      env: ["SGLANG_USE_CPU_ENGINE=1"],
       flags: [
         "--model {{MODEL_NAME}}",
         "--device cpu",
