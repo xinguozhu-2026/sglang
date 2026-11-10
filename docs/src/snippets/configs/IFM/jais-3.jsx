@@ -10,7 +10,10 @@ export const config = {
 
   latencyPercentile: "P50",
 
-  supportedHardware: ["h100"],
+  supportedHardware: ["h100", "xeon"],
+  hardware: [
+    { id: "xeon", label: "XEON", vram: "CPU", vendor: "cpu" },
+  ],
   runModes: ["python"],
 
   variants: [
@@ -92,9 +95,11 @@ sgl-eval run gsm8k \\
   },
 
   playgroundFeatures: {
+    normalizeDeltas: (deltas, derived, base) => base.hw === "xeon" ? {} : deltas,
     // CP is unsupported/unvalidated for the xLLM path. DP-attention and
     // alternate MoE backends are also intentionally omitted until validated.
     attention: {
+      showWhen: (s) => s.hw !== "xeon",
       knobs: [
         {
           id: "tp",
@@ -120,6 +125,7 @@ sgl-eval run gsm8k \\
     // expert parallelism disabled on the dense variants.
     // The MoVA recipe runs with EP=2. The 375B recipe is two-node TP=16 with EP=16.
     moe: {
+      showWhen: (s) => s.hw !== "xeon",
       ep: {
         label: "EP",
         values: [
@@ -166,6 +172,7 @@ sgl-eval run gsm8k \\
     },
 
     parsers: {
+      showWhen: (s) => s.hw !== "xeon",
       items: [
         { id: "reasoning", label: "Reasoning Parser", flag: "--reasoning-parser k2_horizon" },
         { id: "toolCall", label: "Tool Call Parser", flag: "--tool-call-parser k2_horizon" },
@@ -173,6 +180,7 @@ sgl-eval run gsm8k \\
     },
 
     speculative: {
+      showWhen: (s) => s.hw !== "xeon",
       options: [
         { id: "current", label: "Inherited from base" },
         { id: "off", label: "Off" },
@@ -184,6 +192,7 @@ sgl-eval run gsm8k \\
     },
 
     pdDisagg: {
+      showWhen: (s) => s.hw !== "xeon",
       modes: [
         { id: "off", label: "Off" },
         { id: "prefill", label: "Prefill role" },
@@ -208,6 +217,7 @@ sgl-eval run gsm8k \\
     },
 
     hicache: {
+      showWhen: (s) => s.hw !== "xeon",
       backends: [
         { id: null, label: "Auto" },
         { id: "file", label: "File" },
@@ -225,6 +235,22 @@ sgl-eval run gsm8k \\
   },
 
   cells: [
+    {
+      match: { hw: "xeon", variant: "32b", quant: "bf16", strategy: "balanced", nodes: "single" },
+      verified: false,
+      verificationStatus: "unverified",
+      env: [],
+      flags: [
+        "--model {{MODEL_NAME}}",
+        "--device cpu",
+        "--disable-overlap-schedule",
+        "--tp 6",
+        "--dtype bfloat16",
+        "--trust-remote-code",
+        "--host {{HOST_IP}}",
+        "--port {{PORT}}",
+      ],
+    },
     {
       match: { hw: "h100", variant: "0.9b", quant: "bf16", strategy: "balanced", nodes: "single" },
       verified: true,
