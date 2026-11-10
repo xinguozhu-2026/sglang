@@ -1,7 +1,7 @@
 export const config = {
   modelName: "Muse Glimmer",
 
-  supportedHardware: ["b200", "h200", "rtx5090", "rtx6000", "dgx-spark", "mac"],
+  supportedHardware: ["b200", "h200", "rtx5090", "rtx6000", "dgx-spark", "mac", "xeon"],
 
   hardware: [
     // RTX 5090 and RTX PRO 6000 are Blackwell-generation but not in the shared
@@ -15,6 +15,7 @@ export const config = {
     // Apple Silicon Mac (MLX backend, unified memory). Benchmarked on an
     // M5 Pro 64GB; the q4km-gs128 artifact fits a 48GB machine.
     { id: "mac",       label: "Apple Silicon", vram: "48GB+", vendor: "apple" },
+    { id: "xeon",      label: "XEON", vram: "CPU", vendor: "cpu" },
   ],
 
   variants: [{ id: "default", label: "Default" }],
@@ -32,7 +33,7 @@ export const config = {
   ],
 
   // No Docker path on Apple Silicon — the MLX backend runs native-only.
-  runModes: (s) => (s.hw === "mac" ? ["python"] : ["python", "docker"]),
+  runModes: (s) => (s.hw === "mac" || s.hw === "xeon" ? ["python"] : ["python", "docker"]),
 
   strategies: [
     { id: "standard", label: "Standard" },
@@ -47,7 +48,7 @@ export const config = {
       title: "Modality",
       default: "text",
       // GGUF and every MLX artifact are text-only; no modality choice there.
-      showWhen: (s) => s.quant !== "gguf" && !(s.quant || "").startsWith("mlx-"),
+      showWhen: (s) => s.hw !== "xeon" && s.quant !== "gguf" && !(s.quant || "").startsWith("mlx-"),
       options: [
         // NVFP4 ships with no vision weights despite config.json declaring
         // vision_config, so "Image + text" only shows for bf16.
@@ -115,13 +116,16 @@ export const config = {
   },
 
   playgroundFeatures: {
+    normalizeDeltas: (deltas, derived, base) => base.hw === "xeon" ? {} : deltas,
     attention: {
+      showWhen: (s) => s.hw !== "xeon",
       knobs: [
         { id: "tp", label: "TP", values: [null, 1, 2] },
       ],
     },
 
     speculative: {
+      showWhen: (s) => s.hw !== "xeon",
       options: [
         { id: "current", label: "Inherited from base" },
         { id: "off",     label: "Off" },
@@ -285,6 +289,23 @@ export const config = {
         "--speculative-draft-model-quantization fp8",
         "--kv-cache-dtype fp8_e4m3",
         "--mem-fraction-static 0.85",
+        "--host {{HOST_IP}}",
+        "--port {{PORT}}",
+      ],
+    },
+    {
+      match: { hw: "xeon", variant: "default", quant: "bf16", strategy: "standard", nodes: "single" },
+      verified: false,
+      verificationStatus: "unverified",
+      env: [],
+      flags: [
+        "--model {{MODEL_NAME}}",
+        "--device cpu",
+        "--disable-overlap-schedule",
+        "--tp 6",
+        "--dtype bfloat16",
+        "--trust-remote-code",
+        "--max-total-tokens 8192",
         "--host {{HOST_IP}}",
         "--port {{PORT}}",
       ],

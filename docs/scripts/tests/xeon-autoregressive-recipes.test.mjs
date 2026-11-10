@@ -17,6 +17,7 @@ const commandDigests = {
   "poolside/laguna-s21.jsx": "a932c167c5f2cde37ab672dd48091a81888b34065f0f27d85593db795c7808e3",
   "openbmb/minicpm5-2b.jsx": "5c6d6cdae9c6c7d3de43073745ab1ca6c32d43310df0767dae20c3bd256a60f6",
   "Qwen/qwen3.8-27b.jsx": "284b74186dda780d1fc4993d68cf183600fc947dad268e20c75e0e778268d7fa",
+  "meta-models/muse-glimmer.jsx": "173b0a76052a608d14d459ec90fcfa1bc12a4ba8b236bbe225b12f7de8a03ac9",
 };
 const engineSource = readFileSync(join(root, "docs/src/snippets/_deployment.jsx"), "utf8");
 const start = engineSource.indexOf("  // ==== COMMAND ENGINE ====");
@@ -97,6 +98,17 @@ for (const [path, digest] of Object.entries(commandDigests)) {
       if (path === "openbmb/minicpm5-2b.jsx") {
         assert.match(command, /--default-chat-template-kwargs '\{"enable_thinking":false\}'/);
         assert.doesNotMatch(command, /--reasoning-parser|--tool-call-parser/);
+      }
+      if (path === "meta-models/muse-glimmer.jsx") {
+        assert.equal(cells.length, 1);
+        assert.equal(cell.match.quant, "bf16");
+        assert.equal(cell.match.strategy, "standard");
+        assert.match(command, /--model meta-models\/Muse-Glimmer-30B/);
+        assert.match(command, /--tp 6/);
+        assert.match(command, /--max-total-tokens 8192/);
+        assert.doesNotMatch(command, /--language-model-only|--reasoning-parser|--tool-call-parser/);
+        assert.equal(config.playgroundFeatures.attention.showWhen(selection), false);
+        assert.equal(config.playgroundFeatures.speculative.showWhen(selection), false);
       }
       if (path === "poolside/laguna-s21.jsx") {
         assert.equal(cells.length, 1);

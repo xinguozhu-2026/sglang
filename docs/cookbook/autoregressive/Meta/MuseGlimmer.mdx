@@ -43,6 +43,13 @@ See [Install → Method 3: Using Docker](../../../docs/get-started/install#metho
 
 </Accordion>
 
+**Intel Xeon:** Build upstream SGLang `main` with matching CPU operators using
+the [installation guide](../../../docs/get-started/install), rather than the
+GPU development branch or image above. The BF16 Standard TP6 recipe passed a
+basic text-generation check on Xeon GNR without a runtime patch. Image input,
+speculation, parsers, other checkpoint formats and CPU performance were not
+validated.
+
 Select a checkpoint format. Select whether to use speculative decoding:
 
 - **Standard**: Use normal autoregressive decoding.
