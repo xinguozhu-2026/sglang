@@ -88,6 +88,23 @@ export const config = {
 
   cells: [
     {
+      match: { hw: "xeon", variant: "35b", quant: "bf16", strategy: "balanced", nodes: "single" },
+      verified: false,
+      verificationStatus: "unverified",
+      env: [],
+      flags: [
+        "--model deepreinforce-ai/Ornith-1.0-35B",
+        "--device cpu",
+        "--disable-overlap-schedule",
+        "--served-model-name {{MODEL_NAME}}",
+        "--tp 6",
+        "--dtype bfloat16",
+        "--trust-remote-code",
+        "--host {{HOST_IP}}",
+        "--port {{PORT}}",
+      ],
+    },
+    {
       match: { hw: "xeon", variant: "9b", quant: "bf16", strategy: "balanced", nodes: "single" },
       verified: false,
       verificationStatus: "unverified",
