@@ -73,6 +73,10 @@ for (const [path, digest] of Object.entries(commandDigests)) {
     if (path === "IFM/k2-horizon.jsx") {
       assert.deepEqual(cells.map((cell) => cell.match.variant).sort(), ["0.9b", "3.7b", "32b", "7b"]);
     }
+    if (path === "ornith-ai/ornith-1.5.jsx") {
+      assert.deepEqual(cells.map((cell) => cell.match.variant).sort(), ["35b", "9b"]);
+      assert.ok(cells.every((cell) => cell.match.quant === "bf16"));
+    }
     for (const cell of cells) {
       const selection = { ...cell.match, ...overlays };
       assert.deepEqual(modes(config, selection), ["python"]);
