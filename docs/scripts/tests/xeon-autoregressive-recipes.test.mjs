@@ -18,6 +18,7 @@ const commandDigests = {
   "openbmb/minicpm5-2b.jsx": "5c6d6cdae9c6c7d3de43073745ab1ca6c32d43310df0767dae20c3bd256a60f6",
   "Qwen/qwen3.8-27b.jsx": "284b74186dda780d1fc4993d68cf183600fc947dad268e20c75e0e778268d7fa",
   "meta-models/muse-glimmer.jsx": "173b0a76052a608d14d459ec90fcfa1bc12a4ba8b236bbe225b12f7de8a03ac9",
+  "internlm/intern-s2-mobius.jsx": "a345faa64043901ad1452fb84b2bdd7f81119f4eb179c76e0765ca80c361e8e2",
 };
 const engineSource = readFileSync(join(root, "docs/src/snippets/_deployment.jsx"), "utf8");
 const start = engineSource.indexOf("  // ==== COMMAND ENGINE ====");
@@ -98,6 +99,25 @@ for (const [path, digest] of Object.entries(commandDigests)) {
       if (path === "openbmb/minicpm5-2b.jsx") {
         assert.match(command, /--default-chat-template-kwargs '\{"enable_thinking":false\}'/);
         assert.doesNotMatch(command, /--reasoning-parser|--tool-call-parser/);
+      }
+      if (path === "internlm/intern-s2-mobius.jsx") {
+        assert.equal(cells.length, 1);
+        assert.equal(cell.match.quant, "bf16");
+        assert.equal(cell.match.strategy, "high-throughput");
+        assert.match(command, /--model internlm\/Intern-S2-Mobius/);
+        assert.match(command, /--tp 4/);
+        assert.match(command, /--moe-runner-backend triton/);
+        assert.match(command, /--disable-radix-cache/);
+        assert.match(command, /--max-total-tokens 8192/);
+        assert.match(command, /--max-mamba-cache-size 64/);
+        assert.doesNotMatch(command, /--reasoning-parser|--tool-call-parser|triton_kernel/);
+        assert.deepEqual(
+          { ...config.defaultAccuracy.default, ...cell.accuracy },
+          { gsm8k_pct: null, gpqa_pct: null },
+        );
+        assert.equal(config.playgroundFeatures.attention.showWhen(selection), false);
+        assert.equal(config.playgroundFeatures.parsers.showWhen(selection), false);
+        assert.equal(config.playgroundFeatures.speculative.showWhen(selection), false);
       }
       if (path === "meta-models/muse-glimmer.jsx") {
         assert.equal(cells.length, 1);

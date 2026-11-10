@@ -1,6 +1,6 @@
 ---
 title: Intern-S2-Mobius
-description: "Deploy the BF16 and FP8 Intern-S2-Mobius checkpoints with SGLang on NVIDIA H200 and B200."
+description: "Deploy the BF16 and FP8 Intern-S2-Mobius checkpoints with SGLang on NVIDIA H200 and B200, or the BF16 checkpoint on Intel Xeon CPUs."
 tag: NEW
 ---
 
@@ -44,6 +44,10 @@ Pick your hardware + recipe to generate the launch command. The two serving stra
 
 - **Low-Latency** — MTP (NEXTN) speculative decoding on. Fastest reply for a single user.
 - **High-Throughput** — spec off, more tokens per second when many users share the server.
+
+**Intel Xeon CPU:** Select **XEON**, **BF16**, and **High-Throughput** for the Python-only baseline. Use the [CPU installation guide](../../../docs/hardware-platforms/cpu_server), not the CUDA installation commands above. All five checkpoint shards at revision `1b23c974` were loaded on Intel Xeon 6972P (Granite Rapids); unpatched upstream SGLang `626b95d` with matching CPU kernels completed 577 coherent, relevant tokens with a normal stop. Use the emitted **TP4** and explicit **`--moe-runner-backend triton`**: TP6 fails head divisibility, and the default `auto` backend hits an upstream CPU platform-attribute bug. No runtime patch is required for this tested configuration.
+
+The CPU recipe uses BF16 computation, an 8192-token pool, a 64-slot Mamba cache and disabled radix caching. It does not enable speculative decoding or parser overrides. FP8, images, tool calls, the Responses API, long-context behavior, dataset accuracy and performance are not validated on CPU. GPU benchmark scores below do not apply to the CPU cell; this is a basic text-generation check, not full benchmark verification.
 
 import { Deployment } from "/src/snippets/_deployment.jsx";
 import { config }     from "/src/snippets/configs/internlm/intern-s2-mobius.jsx";
