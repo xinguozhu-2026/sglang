@@ -16,6 +16,7 @@ const commandDigests = {
   "poolside/laguna-xs21.jsx": "adbe322201ea8aa8dc7043e98506945efa3bdce7545fb2e01ad618788c02c949",
   "poolside/laguna-s21.jsx": "a932c167c5f2cde37ab672dd48091a81888b34065f0f27d85593db795c7808e3",
   "openbmb/minicpm5-2b.jsx": "5c6d6cdae9c6c7d3de43073745ab1ca6c32d43310df0767dae20c3bd256a60f6",
+  "Qwen/qwen3.8-27b.jsx": "284b74186dda780d1fc4993d68cf183600fc947dad268e20c75e0e778268d7fa",
 };
 const engineSource = readFileSync(join(root, "docs/src/snippets/_deployment.jsx"), "utf8");
 const start = engineSource.indexOf("  // ==== COMMAND ENGINE ====");
@@ -63,7 +64,8 @@ for (const [path, digest] of Object.entries(commandDigests)) {
   });
 
   test(`${path}: Xeon recipes are CPU-only and cannot inherit Playground overrides`, () => {
-    const cells = config.cells.filter((cell) => cell.match.hw === "xeon");
+    const cells = config.cells.filter((cell) => cell.match.hw === "xeon" &&
+      (path !== "Qwen/qwen3.8-27b.jsx" || cell.match.quant === "fp8"));
     assert.ok(cells.length > 0);
     if (path === "IFM/jais-3.jsx") {
       assert.deepEqual(cells.map((cell) => cell.match.variant).sort(), ["3.7b", "32b", "7b"]);
@@ -97,6 +99,24 @@ for (const [path, digest] of Object.entries(commandDigests)) {
         assert.doesNotMatch(command, /SGLANG_SHARED_EXPERT_TP1|--reasoning-parser|--tool-call-parser/);
         assert.equal(config.playgroundFeatures.attention.showWhen(selection), false);
         assert.equal(config.playgroundFeatures.parsers.showWhen(selection), false);
+      }
+      if (path === "Qwen/qwen3.8-27b.jsx") {
+        assert.equal(cells.length, 1);
+        assert.match(command, /--model Qwen\/Qwen3.8-27B-FP8/);
+        assert.match(command, /--tp 6/);
+        assert.match(command, /--max-total-tokens 8192/);
+        assert.match(command, /--max-mamba-cache-size 64/);
+        assert.doesNotMatch(command, /--reasoning-parser|--tool-call-parser|--mamba-ssm-dtype/);
+        assert.equal(config.playgroundFeatures.parsers.showWhen(selection), false);
+        assert.equal(config.playgroundFeatures.speculative.showWhen(selection), false);
+        for (const spec of config.playgroundFeatures.flagSelects) {
+          assert.equal(spec.showWhen(selection), false);
+        }
+        const existing = config.cells.find((cell) =>
+          cell.match.hw === "xeon" && cell.match.quant === "bf16");
+        const bf16 = { ...existing.match, ...overlays };
+        assert.equal(currentEngine.renderCommand(existing, bf16, env, "python"),
+          "sglang serve \\\n  --trust-remote-code \\\n  --model-path Qwen/Qwen3.8-27B \\\n  --device cpu \\\n  --disable-overlap-schedule \\\n  --tp 6 \\\n  --mem-fraction-static 0.8 \\\n  --reasoning-parser qwen3 \\\n  --tool-call-parser qwen3_coder \\\n  --host 0.0.0.0 \\\n  --port 30000");
       }
       assert.deepEqual(config.playgroundFeatures.normalizeDeltas(
         { attention: { tp: 8 }, speculative: { mode: "dflash" } }, {}, selection,
