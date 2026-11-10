@@ -74,6 +74,12 @@ For the full Docker setup and other installation methods, please refer to the [o
 
 **Interactive Command Generator**: Use the configuration selector below to generate a launch command for your hardware.
 
+The **XEON** option covers BF16 text generation on Intel Xeon 6972P (GNR),
+using TP=4. It passed a basic generation sanity check, not a dataset accuracy
+evaluation. Quantized checkpoints, DP attention, and parser overrides are not
+validated by this CPU recipe. Use a CPU-enabled SGLang installation from the
+[installation guide](../../../docs/get-started/install).
+
 import { LagunaXS2Deployment } from '/src/snippets/autoregressive/laguna-xs2-deployment.jsx';
 
 <LagunaXS2Deployment />

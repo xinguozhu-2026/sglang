@@ -13,7 +13,8 @@ export const LagunaXS2Deployment = () => {
       title: 'Hardware Platform',
       items: [
         { id: 'h200', label: 'H200', default: true },
-        { id: 'b200', label: 'B200/GB200', default: false }
+        { id: 'b200', label: 'B200/GB200', default: false },
+        { id: 'xeon', label: 'XEON', default: false }
       ]
     },
     quantization: {
@@ -58,6 +59,10 @@ export const LagunaXS2Deployment = () => {
   };
 
   const resolveItems = (option, values) => {
+    if (values.hardware === 'xeon' && option.name !== 'hardware') {
+      const supported = option.name === 'quantization' ? 'bf16' : 'disabled';
+      return option.items.map(item => ({ ...item, disabled: item.id !== supported }));
+    }
     if (typeof option.getDynamicItems === 'function') {
       return option.getDynamicItems(values);
     }
@@ -109,6 +114,21 @@ export const LagunaXS2Deployment = () => {
 
   const generateCommand = () => {
     const { hardware, quantization, reasoning, toolcall, dpAttention } = values;
+
+    if (hardware === 'xeon') {
+      if (quantization !== 'bf16') return '# Error: Xeon is validated only with BF16.';
+      return [
+        'sglang serve \\',
+        '  --model poolside/Laguna-XS.2 \\',
+        '  --device cpu \\',
+        '  --disable-overlap-schedule \\',
+        '  --tp 4 \\',
+        '  --dtype bfloat16 \\',
+        '  --trust-remote-code \\',
+        '  --host 0.0.0.0 \\',
+        '  --port 30000',
+      ].join('\n');
+    }
 
     if (hardware === 'h200' && quantization === 'nvfp4') {
       return '# Error: NVFP4 is Blackwell-only. Select B200, or pick BF16/FP8 for H200.';
