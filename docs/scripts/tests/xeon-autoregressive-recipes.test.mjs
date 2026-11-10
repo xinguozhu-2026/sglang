@@ -1,18 +1,20 @@
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
 
 const root = fileURLToPath(new URL("../../..", import.meta.url));
-const paths = [
-  "ibm-granite/granite-4.2.jsx",
-  "deepreinforce-ai/ornith-1.0.jsx",
-  "ornith-ai/ornith-1.5.jsx",
-  "IFM/k2-horizon.jsx",
-  "poolside/laguna-xs21.jsx",
-];
+// Non-CPU command snapshots from upstream 626b95d; no Git history needed in CI.
+const commandDigests = {
+  "ibm-granite/granite-4.2.jsx": "8c5c901d865063c5968cec87b047c8a4b453e66126439d580aaf56ff4a901481",
+  "deepreinforce-ai/ornith-1.0.jsx": "2eb0869b23811c8f45c25ecd6c1504ac45c075a8477031333e79402680829a43",
+  "ornith-ai/ornith-1.5.jsx": "69a8ef736f274775c2410dec39ebee6fafe040f774463429a205cec75a9bc0ed",
+  "IFM/k2-horizon.jsx": "ca80fa456d250417f6eb32cae409f307c24c904d54c7efb0cd633cfcacc08a30",
+  "IFM/jais-3.jsx": "7581cf5bea5568989223471c115ab3bb3208a5574f56d6a18d09fb94afc786c0",
+  "poolside/laguna-xs21.jsx": "adbe322201ea8aa8dc7043e98506945efa3bdce7545fb2e01ad618788c02c949",
+};
 const engineSource = readFileSync(join(root, "docs/src/snippets/_deployment.jsx"), "utf8");
 const start = engineSource.indexOf("  // ==== COMMAND ENGINE ====");
 const end = engineSource.indexOf("  // ==== end COMMAND ENGINE ====");
@@ -26,15 +28,10 @@ const modes = (config, selection) =>
   (typeof config.runModes === "function" ? config.runModes(selection) : config.runModes)
   || ["python", "docker"];
 
-for (const path of paths) {
+for (const [path, digest] of Object.entries(commandDigests)) {
   const relative = `docs/src/snippets/configs/${path}`;
   const config = await load(readFileSync(join(root, relative), "utf8"));
-  const original = await load(execFileSync(
-    "git", ["show", `626b95d503321e01bd145b12b2f82aac43d78fc0:${relative}`],
-    { cwd: root, encoding: "utf8" },
-  ));
   const currentEngine = engine(config);
-  const originalEngine = engine(original);
   const env = Object.fromEntries(
     Object.entries(config.placeholders || {}).map(([key, spec]) => [key, spec.default ?? ""]),
   );
@@ -43,7 +40,8 @@ for (const path of paths) {
   );
 
   test(`${path}: existing platforms retain byte-identical commands`, () => {
-    for (const cell of original.cells) {
+    const snapshots = [];
+    for (const cell of config.cells.filter((cell) => cell.match.hw !== "xeon")) {
       const base = { ...cell.match, ...overlays };
       const selections = [
         base,
@@ -51,19 +49,18 @@ for (const path of paths) {
           (spec.options || []).map((option) => ({ ...base, [spec.id]: option.id }))),
       ];
       for (const selection of selections) {
-        assert.deepEqual(modes(config, selection), modes(original, selection));
-        for (const mode of modes(original, selection)) {
-          assert.equal(
-            currentEngine.renderCommand(currentEngine.findCell(config.cells, selection), selection, env, mode),
-            originalEngine.renderCommand(originalEngine.findCell(original.cells, selection), selection, env, mode),
-          );
-        }
+        const runModes = modes(config, selection);
+        snapshots.push([selection, runModes, runModes.map((mode) =>
+          currentEngine.renderCommand(currentEngine.findCell(config.cells, selection), selection, env, mode),
+        )]);
       }
     }
+    assert.equal(createHash("sha256").update(JSON.stringify(snapshots)).digest("hex"), digest);
   });
 
   test(`${path}: Xeon recipes are CPU-only and cannot inherit Playground overrides`, () => {
     const cells = config.cells.filter((cell) => cell.match.hw === "xeon");
+    assert.ok(cells.length > 0);
     for (const cell of cells) {
       const selection = { ...cell.match, ...overlays };
       assert.deepEqual(modes(config, selection), ["python"]);
