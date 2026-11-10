@@ -54,6 +54,16 @@ import { benchmarks } from "/src/snippets/configs/openbmb/minicpm5-2b-benchmarks
   yet. The DSpark overlay carries no speed numbers on any card.
 </Note>
 
+The **XEON** recipe was checked on Intel Xeon 6972P (GNR) with BF16 at TP6,
+upstream SGLang `626b95d503321e01bd145b12b2f82aac43d78fc0`, matching CPU
+operators, and checkpoint `f97400052a43d642bbc6e9975e2397e3ae6a6b52`.
+It uses the official `enable_thinking=false` chat-template setting: this mode
+completed a coherent text-generation quick check, while default thinking
+exhibited excessive repetition. This is not a dataset-accuracy result; the CPU
+cell remains unverified in that stronger sense. DSpark, tool calling, reasoning
+parsing and alternate parallelism settings were not validated on Xeon and are
+not part of this recipe.
+
 ## Playground
 
 The Playground is where you experiment with **SGLang features beyond the recipes above**. The Deploy panel emits this model's documented launch recipes; the Playground lets you turn on additional knobs on top of whichever cell the Deploy panel is currently showing.

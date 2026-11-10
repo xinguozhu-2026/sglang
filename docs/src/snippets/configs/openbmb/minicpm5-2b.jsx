@@ -28,7 +28,9 @@
 export const config = {
   modelName: "MiniCPM5-2B",
 
-  supportedHardware: ["h200", "rtx6000", "rtx5090", "dgx-spark"],
+  supportedHardware: ["h200", "rtx6000", "rtx5090", "dgx-spark", "xeon"],
+
+  runModes: (s) => s.hw === "xeon" ? ["python"] : ["python", "docker"],
 
   // RTX PRO 6000 and RTX 5090 (SM120 / Blackwell workstation + desktop) are not
   // datacenter parts, so the shared HARDWARE_CATALOG in _deployment.jsx does not
@@ -36,6 +38,7 @@ export const config = {
   hardware: [
     { id: "rtx6000", label: "RTX PRO 6000", vram: "96GB", vendor: "blackwell" },
     { id: "rtx5090", label: "RTX 5090", vram: "32GB", vendor: "blackwell" },
+    { id: "xeon", label: "XEON", vram: "CPU", vendor: "cpu" },
   ],
 
   matchDims: [
@@ -54,6 +57,7 @@ export const config = {
     {
       id: "spec",
       title: "Speculative Decoding",
+      showWhen: (s) => s.hw !== "xeon",
       default: "none",
       options: [
         { id: "none", label: "None" },
@@ -120,9 +124,11 @@ export const config = {
   },
 
   playgroundFeatures: {
+    normalizeDeltas: (deltas, derived, base) => base.hw === "xeon" ? {} : deltas,
     // The model fits one GPU on every supported card, so TP=1 is the verified
     // shape; TP=2 is exposed for experimentation only.
     attention: {
+      showWhen: (s) => s.hw !== "xeon",
       knobs: [
         { id: "tp", label: "TP", values: [null, 1, 2] },
       ],
@@ -133,6 +139,7 @@ export const config = {
     // each chip as on and strips the flag when one is toggled off. The
     // reasoning slug is `qwen3`, not `minicpm5` — see the header note.
     parsers: {
+      showWhen: (s) => s.hw !== "xeon",
       items: [
         { id: "reasoning", label: "Reasoning Parser", flag: "--reasoning-parser qwen3" },
         { id: "toolCall",  label: "Tool Call Parser", flag: "--tool-call-parser minicpm5" },
@@ -143,6 +150,7 @@ export const config = {
     // Same DSpark flags as the Deploy panel's overlay row, so the two paths
     // compose an identical command.
     speculative: {
+      showWhen: (s) => s.hw !== "xeon",
       options: [
         { id: "current", label: "Inherited from base" },
         { id: "off",     label: "Off (greedy)" },
@@ -159,6 +167,21 @@ export const config = {
   // `minicpm5` tool-call parser it recommends for agent workloads and the
   // `qwen3` reasoning parser its `<think>` template needs.
   cells: [
+    {
+      match: { hw: "xeon", variant: "default", quant: "bf16", nodes: "single" },
+      verified: false,
+      verificationStatus: "unverified",
+      env: ["SGLANG_USE_CPU_ENGINE=1"],
+      flags: [
+        "--model-path {{MODEL_NAME}}",
+        "--device cpu",
+        "--tp 6",
+        "--disable-overlap-schedule",
+        "--default-chat-template-kwargs '{\"enable_thinking\":false}'",
+        "--host {{HOST_IP}}",
+        "--port {{PORT}}",
+      ],
+    },
     {
       match: { hw: "h200", variant: "default", quant: "bf16", nodes: "single" },
       verified: true,

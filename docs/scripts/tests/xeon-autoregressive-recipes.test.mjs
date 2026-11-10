@@ -14,6 +14,7 @@ const commandDigests = {
   "IFM/k2-horizon.jsx": "ca80fa456d250417f6eb32cae409f307c24c904d54c7efb0cd633cfcacc08a30",
   "IFM/jais-3.jsx": "7581cf5bea5568989223471c115ab3bb3208a5574f56d6a18d09fb94afc786c0",
   "poolside/laguna-xs21.jsx": "adbe322201ea8aa8dc7043e98506945efa3bdce7545fb2e01ad618788c02c949",
+  "openbmb/minicpm5-2b.jsx": "5c6d6cdae9c6c7d3de43073745ab1ca6c32d43310df0767dae20c3bd256a60f6",
 };
 const engineSource = readFileSync(join(root, "docs/src/snippets/_deployment.jsx"), "utf8");
 const start = engineSource.indexOf("  // ==== COMMAND ENGINE ====");
@@ -70,6 +71,18 @@ for (const [path, digest] of Object.entries(commandDigests)) {
       assert.match(command, /--device cpu/);
       assert.match(command, /--disable-overlap-schedule/);
       assert.doesNotMatch(command, /docker|--ep|--speculative|--kv-cache-dtype fp8/);
+      for (const spec of config.overlayDims || []) {
+        assert.equal(spec.showWhen?.(selection), false);
+        for (const option of spec.options || []) {
+          assert.equal(currentEngine.renderCommand(
+            cell, { ...selection, [spec.id]: option.id }, env, "python",
+          ), command);
+        }
+      }
+      if (path === "openbmb/minicpm5-2b.jsx") {
+        assert.match(command, /--default-chat-template-kwargs '\{"enable_thinking":false\}'/);
+        assert.doesNotMatch(command, /--reasoning-parser|--tool-call-parser/);
+      }
       assert.deepEqual(config.playgroundFeatures.normalizeDeltas(
         { attention: { tp: 8 }, speculative: { mode: "dflash" } }, {}, selection,
       ), {});
