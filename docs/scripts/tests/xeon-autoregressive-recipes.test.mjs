@@ -66,7 +66,7 @@ for (const [path, digest] of Object.entries(commandDigests)) {
     const cells = config.cells.filter((cell) => cell.match.hw === "xeon");
     assert.ok(cells.length > 0);
     if (path === "IFM/jais-3.jsx") {
-      assert.deepEqual(cells.map((cell) => cell.match.variant).sort(), ["3.7b", "32b"]);
+      assert.deepEqual(cells.map((cell) => cell.match.variant).sort(), ["3.7b", "32b", "7b"]);
     }
     for (const cell of cells) {
       const selection = { ...cell.match, ...overlays };
