@@ -10,7 +10,7 @@
 // for CUDA-graph capture and NCCL allocs than FP8/INT4 on 141 GB/GPU.
 // B300/GB300 (288 GB/GPU) unaffected.
 //
-// SGLANG_SHARED_EXPERT_TP1=1 (FP8 cells, all hardware): FP8 block-quantizes the shared
+// SGLANG_SHARED_EXPERT_TP1=1 (GPU FP8 cells): FP8 block-quantizes the shared
 // expert; required at both TP=4 (GB300) and TP=8 (H200/B300). INT4 shared expert stays
 // bf16 — no flag needed. Differs from Laguna-XS-2.1 where TP=4 works without this flag.
 //
@@ -20,7 +20,11 @@
 export const config = {
   modelName: "Laguna-S-2.1",
 
-  supportedHardware: ["h200", "b300", "gb300"],
+  supportedHardware: ["h200", "b300", "gb300", "xeon"],
+  hardware: [
+    { id: "xeon", label: "XEON", vram: "CPU", vendor: "cpu" },
+  ],
+  runModes: (s) => s.hw === "xeon" ? ["python"] : ["python", "docker"],
 
   variants: [
     { id: "default", label: "Default" },
@@ -112,12 +116,15 @@ sgl-eval run aime25 \\
   },
 
   playgroundFeatures: {
+    normalizeDeltas: (deltas, derived, base) => base.hw === "xeon" ? {} : deltas,
     attention: {
+      showWhen: (s) => s.hw !== "xeon",
       knobs: [
         { id: "tp", label: "TP", values: [null, 1, 2, 4, 8] },
       ],
     },
     parsers: {
+      showWhen: (s) => s.hw !== "xeon",
       items: [
         { id: "reasoning", label: "Reasoning Parser", flag: "--reasoning-parser poolside_v1" },
         { id: "toolCall",  label: "Tool Call Parser", flag: "--tool-call-parser poolside_v1" },
@@ -498,6 +505,23 @@ sgl-eval run aime25 \\
         "--speculative-draft-model-path poolside/Laguna-S-2.1-DFlash-INT4",
         "--page-size 1",
         "--mem-fraction-static 0.7",
+        "--host {{HOST_IP}}",
+        "--port {{PORT}}",
+      ],
+    },
+    {
+      match: { hw: "xeon", variant: "default", quant: "fp8", strategy: "high-throughput", nodes: "single" },
+      verified: false,
+      verificationStatus: "unverified",
+      env: [],
+      flags: [
+        "--model {{MODEL_NAME}}",
+        "--device cpu",
+        "--disable-overlap-schedule",
+        "--tp 4",
+        "--dtype bfloat16",
+        "--trust-remote-code",
+        "--max-total-tokens 8192",
         "--host {{HOST_IP}}",
         "--port {{PORT}}",
       ],

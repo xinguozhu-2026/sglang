@@ -1,6 +1,6 @@
 ---
 title: Laguna-S-2.1
-description: "Deploy poolside's Laguna-S-2.1 — a 118B hybrid-SWA Mixture-of-Experts model (8B active) for agentic coding — with SGLang on NVIDIA H200, B300, and GB300 in BF16, FP8, NVFP4, and INT4."
+description: "Deploy poolside's Laguna-S-2.1 — a 118B hybrid-SWA Mixture-of-Experts model (8B active) for agentic coding — with SGLang on NVIDIA H200, B300, and GB300 in BF16, FP8, NVFP4, and INT4, or Intel Xeon CPUs in FP8."
 tag: NEW
 ---
 
@@ -50,6 +50,8 @@ Pick your hardware + quantization + strategy to generate the launch command. The
 
 On the 8-GPU HGX platforms (H200 / B300) all quantizations run `--tp 8`. The 4-GPU GB300 node runs `--tp 4` throughout. NVFP4 is Blackwell-only (B300 / GB300 only).
 
+**Intel Xeon CPU:** Select **XEON**, **FP8**, and **High-throughput** for the Python-only, non-speculative TP4 recipe. Basic text generation passed on Intel Xeon 6972P (Granite Rapids) using upstream SGLang `626b95d`, matching CPU kernels, and checkpoint `06d71e91`. The recipe uses BF16 computation and an 8192-token KV-cache budget. TP6 reached readiness but produced garbled output; use TP4. Other precisions, parser overrides, DFlash, images, long-context behavior, dataset accuracy, and performance are not validated on CPU. This is a basic-generation check, not a fully benchmark-verified cell.
+
 import { Deployment } from "/src/snippets/_deployment.jsx";
 import { config }     from "/src/snippets/configs/poolside/laguna-s21.jsx";
 import { benchmarks } from "/src/snippets/configs/poolside/laguna-s21-benchmarks.jsx";
@@ -59,6 +61,8 @@ import { benchmarks } from "/src/snippets/configs/poolside/laguna-s21-benchmarks
 ## Playground
 
 The Playground is where you experiment with **SGLang features beyond the verified matrix**. The Deploy panel above only emits combinations that have been signed off; the Playground lets you turn on additional knobs (TP degree, parsers) on top of whichever cell the Deploy panel is currently showing.
+
+For Xeon, these additional controls are disabled to retain the validated baseline.
 
 import { Playground } from "/src/snippets/_playground.jsx";
 
@@ -133,7 +137,7 @@ BF16 on H200 leaves less headroom for CUDA-graph capture and NCCL allocations th
 
 **FP8 shared expert**
 
-`SGLANG_SHARED_EXPERT_TP1=1` is required for FP8 cells on **all hardware** — confirmed on both H200 (TP=8) and GB300 (TP=4). The FP8 checkpoint block-quantizes the shared expert (128×128 scales), which cannot TP-shard cleanly at either TP degree on S-2.1. This env var replicates the shared expert instead of sharding it. INT4 keeps the shared expert in BF16 (no flag needed); BF16 is unquantized. Note: this differs from Laguna-XS-2.1 where TP=4 does not require the flag — the constraint is architecture-specific.
+`SGLANG_SHARED_EXPERT_TP1=1` is required for FP8 cells on **NVIDIA GPU hardware** — confirmed on both H200 (TP=8) and GB300 (TP=4). The FP8 checkpoint block-quantizes the shared expert (128×128 scales), which cannot TP-shard cleanly on that backend at either TP degree on S-2.1. This env var replicates the shared expert instead of sharding it. The Xeon TP4 recipe passed without this GPU workaround. INT4 keeps the shared expert in BF16 (no flag needed); BF16 is unquantized. Note: this differs from Laguna-XS-2.1 where TP=4 does not require the flag — the constraint is architecture-specific.
 
 **FP8 and NVFP4 DFlash drafts**
 

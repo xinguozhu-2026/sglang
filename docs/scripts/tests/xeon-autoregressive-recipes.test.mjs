@@ -14,6 +14,7 @@ const commandDigests = {
   "IFM/k2-horizon.jsx": "ca80fa456d250417f6eb32cae409f307c24c904d54c7efb0cd633cfcacc08a30",
   "IFM/jais-3.jsx": "7581cf5bea5568989223471c115ab3bb3208a5574f56d6a18d09fb94afc786c0",
   "poolside/laguna-xs21.jsx": "adbe322201ea8aa8dc7043e98506945efa3bdce7545fb2e01ad618788c02c949",
+  "poolside/laguna-s21.jsx": "a932c167c5f2cde37ab672dd48091a81888b34065f0f27d85593db795c7808e3",
   "openbmb/minicpm5-2b.jsx": "5c6d6cdae9c6c7d3de43073745ab1ca6c32d43310df0767dae20c3bd256a60f6",
 };
 const engineSource = readFileSync(join(root, "docs/src/snippets/_deployment.jsx"), "utf8");
@@ -40,7 +41,7 @@ for (const [path, digest] of Object.entries(commandDigests)) {
     (config.overlayDims || []).map((spec) => [spec.id, spec.default ?? spec.options?.[0]?.id ?? ""]),
   );
 
-  test(`${path}: existing platforms retain byte-identical commands`, () => {
+  test(`${path}: existing platforms retain commands and the initial selection`, () => {
     const snapshots = [];
     for (const cell of config.cells.filter((cell) => cell.match.hw !== "xeon")) {
       const base = { ...cell.match, ...overlays };
@@ -57,6 +58,8 @@ for (const [path, digest] of Object.entries(commandDigests)) {
       }
     }
     assert.equal(createHash("sha256").update(JSON.stringify(snapshots)).digest("hex"), digest);
+    assert.deepEqual(config.cells[0].match,
+      config.cells.find((cell) => cell.match.hw !== "xeon").match);
   });
 
   test(`${path}: Xeon recipes are CPU-only and cannot inherit Playground overrides`, () => {
@@ -82,6 +85,15 @@ for (const [path, digest] of Object.entries(commandDigests)) {
       if (path === "openbmb/minicpm5-2b.jsx") {
         assert.match(command, /--default-chat-template-kwargs '\{"enable_thinking":false\}'/);
         assert.doesNotMatch(command, /--reasoning-parser|--tool-call-parser/);
+      }
+      if (path === "poolside/laguna-s21.jsx") {
+        assert.equal(cells.length, 1);
+        assert.equal(cell.match.quant, "fp8");
+        assert.match(command, /--tp 4/);
+        assert.match(command, /--max-total-tokens 8192/);
+        assert.doesNotMatch(command, /SGLANG_SHARED_EXPERT_TP1|--reasoning-parser|--tool-call-parser/);
+        assert.equal(config.playgroundFeatures.attention.showWhen(selection), false);
+        assert.equal(config.playgroundFeatures.parsers.showWhen(selection), false);
       }
       assert.deepEqual(config.playgroundFeatures.normalizeDeltas(
         { attention: { tp: 8 }, speculative: { mode: "dflash" } }, {}, selection,
