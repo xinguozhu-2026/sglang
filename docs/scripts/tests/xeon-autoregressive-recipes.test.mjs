@@ -70,6 +70,9 @@ for (const [path, digest] of Object.entries(commandDigests)) {
     if (path === "IFM/jais-3.jsx") {
       assert.deepEqual(cells.map((cell) => cell.match.variant).sort(), ["3.7b", "32b", "7b"]);
     }
+    if (path === "IFM/k2-horizon.jsx") {
+      assert.deepEqual(cells.map((cell) => cell.match.variant).sort(), ["0.9b", "32b", "7b"]);
+    }
     for (const cell of cells) {
       const selection = { ...cell.match, ...overlays };
       assert.deepEqual(modes(config, selection), ["python"]);
