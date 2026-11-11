@@ -30,10 +30,11 @@ import { DeepSeekV31Deployment } from "/src/snippets/autoregressive/deepseek-v31
 
 <DeepSeekV31Deployment />
 
-**Intel Xeon CPUs:** Select XEON and then DeepSeek-V3.1 for the validated
-single-host TP6 basic text-generation recipe using the official FP8 checkpoint,
+**Intel Xeon CPUs:** Select XEON and then DeepSeek-V3.1 or DeepSeek-V3.1-Terminus
+for independently validated single-host TP6 basic text-generation recipes using
+each model's official FP8 checkpoint,
 BF16 computation and an 8192-token pool. Install CPU kernels matching the selected
-SGLang revision. This baseline does not enable Terminus, DP attention, parsers,
+SGLang revision. These baselines do not enable DP attention, reasoning mode, parsers,
 tool calling or speculative decoding. The existing channel-INT8 recipe and
 hardware-selection default are unchanged.
 

@@ -64,7 +64,7 @@ test("MiMo-V2-Flash preserves all GPU commands and exposes only validated TP4 CP
   assert.deepEqual(switcher.state(), { ...selection, hardware: "h100" });
 });
 
-test("DeepSeek-V3.1 adds only its validated TP6 CPU baseline and preserves existing recipes", () => {
+test("DeepSeek-V3.1 variants expose only validated TP6 CPU baselines and preserve existing recipes", () => {
   const entries = [];
   for (const hardware of ["h200", "b200", "mi300x", "mi325x", "mi355x", "xeon"]) {
     for (const modelname of hardware === "xeon" ? ["v31terminusint8"] : ["v31", "v31terminus"]) {
@@ -82,6 +82,7 @@ test("DeepSeek-V3.1 adds only its validated TP6 CPU baseline and preserves exist
   }
   assert.equal(createHash("sha256").update(JSON.stringify(entries)).digest("hex"),
     "e7e6aa7d2d49db81d4272386c124a0dbfb8cfe92b4593dfc0313638af877df7c");
+  assert.equal(entries.length, 208);
   const selection = {
     hardware: "xeon", modelname: "v31", strategy: ["tp", "dp", "ep", "mtp"],
     reasoningParser: "enabled", toolcall: "enabled",
@@ -98,10 +99,17 @@ test("DeepSeek-V3.1 adds only its validated TP6 CPU baseline and preserves exist
   for (const key of ["strategy", "reasoningParser", "toolcall"]) {
     assert.equal(api.options[key].condition(selection), false);
   }
-  assert.equal(api.options.modelname.items.find((item) => item.id === "v31terminus")
-    .disabledWhen(selection), true);
-  assert.match(builder("deepseek-v31", { ...selection, modelname: "v31terminus" })
-    .generateCommand(), /^# Error:/);
+  const terminus = builder("deepseek-v31", { ...selection, modelname: "v31terminus" });
+  assert.match(terminus.generateCommand(),
+    /--model deepseek-ai\/DeepSeek-V3\.1-Terminus(?:\s|$)/);
+  assert.equal(terminus.generateCommand(),
+    command.replace("--model deepseek-ai/DeepSeek-V3.1 \\\n",
+      "--model deepseek-ai/DeepSeek-V3.1-Terminus \\\n"));
+  for (const key of ["strategy", "reasoningParser", "toolcall"]) {
+    assert.equal(terminus.options[key].condition({ ...selection, modelname: "v31terminus" }), false);
+  }
+  assert.equal(terminus.options.modelname.items.find((item) => item.id === "v31terminus")
+    .disabledWhen, undefined);
   const switcher = builder("deepseek-v31", { ...selection, modelname: "v31terminusint8" });
   switcher.handleRadioChange("modelname", "v31");
   const baseline = {
@@ -109,9 +117,19 @@ test("DeepSeek-V3.1 adds only its validated TP6 CPU baseline and preserves exist
   };
   assert.deepEqual(switcher.state(), baseline);
   switcher.handleRadioChange("modelname", "v31terminus");
+  const terminusBaseline = { ...baseline, modelname: "v31terminus" };
+  assert.deepEqual(switcher.state(), terminusBaseline);
   switcher.handleRadioChange("reasoningParser", "enabled");
+  switcher.handleRadioChange("toolcall", "enabled");
   switcher.handleCheckboxChange("strategy", "dp", true);
+  assert.deepEqual(switcher.state(), terminusBaseline);
+  switcher.handleRadioChange("modelname", "v31");
   assert.deepEqual(switcher.state(), baseline);
+  const hardwareSwitch = builder("deepseek-v31", { ...selection, hardware: "h200", modelname: "v31terminus" });
+  hardwareSwitch.handleRadioChange("hardware", "xeon");
+  assert.equal(hardwareSwitch.state().modelname, "v31terminusint8");
+  hardwareSwitch.handleRadioChange("modelname", "v31terminus");
+  assert.deepEqual(hardwareSwitch.state(), terminusBaseline);
 });
 
 test("GLM-4.5V preserves GPU commands and exposes only its validated BF16 CPU baseline", () => {

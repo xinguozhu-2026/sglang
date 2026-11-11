@@ -1,5 +1,5 @@
 export const DeepSeekV31Deployment = () => {
-  const isXeonV31 = (v) => v.hardware === 'xeon' && v.modelname === 'v31';
+  const isXeonV31 = (v) => v.hardware === 'xeon' && ['v31', 'v31terminus'].includes(v.modelname);
 
   // Config options
   const options = {
@@ -20,7 +20,7 @@ export const DeepSeekV31Deployment = () => {
       title: 'Model Name',
       items: [
         { id: 'v31', label: 'DeepSeek-V3.1', default: true },
-        { id: 'v31terminus', label: 'DeepSeek-V3.1-Terminus', default: false, disabledWhen: (v) => v.hardware === 'xeon' },
+        { id: 'v31terminus', label: 'DeepSeek-V3.1-Terminus', default: false },
         { id: 'v31terminusint8', label: 'DeepSeek-V3.1-Terminus-Channel-int8', default: false, xeonOnly: true }
       ]
     },
@@ -92,7 +92,6 @@ export const DeepSeekV31Deployment = () => {
   const handleRadioChange = (optionName, value) => {
     setValues(prev => {
       if (isXeonV31(prev) && ['reasoningParser', 'toolcall'].includes(optionName)) return prev;
-      if (prev.hardware === 'xeon' && optionName === 'modelname' && value === 'v31terminus') return prev;
       const next = { ...prev, [optionName]: value };
       if (optionName === 'hardware') {
         if (next.hardware === 'xeon') {
@@ -148,12 +147,9 @@ export const DeepSeekV31Deployment = () => {
     const modelName = modelMap[modelname];
     const isXeon = hardware === 'xeon';
 
-    if (isXeon && modelname === 'v31terminus') {
-      return '# Error: DeepSeek-V3.1-Terminus has not been validated on Intel Xeon CPUs.';
-    }
     if (isXeonV31(values)) {
       return 'SGLANG_USE_CPU_ENGINE=1 python3 -m sglang.launch_server \\\n' +
-        '  --model deepseek-ai/DeepSeek-V3.1 \\\n' +
+        `  --model ${modelName} \\\n` +
         '  --device cpu \\\n' +
         '  --disable-overlap-schedule \\\n' +
         '  --tp 6 \\\n' +
