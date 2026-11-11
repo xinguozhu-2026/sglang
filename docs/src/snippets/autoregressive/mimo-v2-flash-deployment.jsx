@@ -7,7 +7,8 @@ export const MiMoV2FlashDeployment = () => {
       items: [
         { id: 'h200', label: 'H200', default: true },
         { id: 'h100', label: 'H100', default: false },
-        { id: 'mi355x', label: 'MI355X', default: false }
+        { id: 'mi355x', label: 'MI355X', default: false },
+        { id: 'xeon', label: 'XEON', default: false }
       ]
     },
     modelname: {
@@ -72,11 +73,23 @@ export const MiMoV2FlashDeployment = () => {
   }, []);
 
   const handleRadioChange = (optionName, value) => {
-    setValues(prev => ({ ...prev, [optionName]: value }));
+    setValues(prev => {
+      if (prev.hardware === 'xeon' && optionName !== 'hardware') return prev;
+      if (optionName === 'hardware' && (value === 'xeon' || prev.hardware === 'xeon')) {
+        const defaults = getInitialState();
+        return {
+          ...prev, hardware: value,
+          strategy: value === 'xeon' ? ['tp'] : defaults.strategy,
+          reasoning: value === 'xeon' ? [] : defaults.reasoning
+        };
+      }
+      return { ...prev, [optionName]: value };
+    });
   };
 
   const handleCheckboxChange = (optionName, itemId, isChecked) => {
     setValues(prev => {
+      if (prev.hardware === 'xeon') return prev;
       const currentValues = prev[optionName] || [];
       if (isChecked) {
         return { ...prev, [optionName]: [...currentValues, itemId] };
@@ -94,6 +107,20 @@ export const MiMoV2FlashDeployment = () => {
     const modelPath = 'XiaomiMiMo/MiMo-V2-Flash';
     const strategyArray = Array.isArray(strategy) ? strategy : [];
     const reasoningArray = Array.isArray(reasoning) ? reasoning : [];
+
+    if (hardware === 'xeon') {
+      return `SGLANG_USE_CPU_ENGINE=1 sglang serve \\\n`
+        + `  --model ${modelPath} \\\n`
+        + `  --device cpu \\\n`
+        + `  --disable-overlap-schedule \\\n`
+        + `  --tp-size 4 \\\n`
+        + `  --dtype bfloat16 \\\n`
+        + `  --max-total-tokens 8192 \\\n`
+        + `  --max-mamba-cache-size 64 \\\n`
+        + `  --host 127.0.0.1 \\\n`
+        + `  --port 30000 \\\n`
+        + `  --trust-remote-code`;
+    }
 
     if (isMI355X && strategyArray.includes('mtp')) {
       return '# MI355X Speculative Decoding (EAGLE): Work In Progress\n'
@@ -160,12 +187,15 @@ export const MiMoV2FlashDeployment = () => {
           <div style={itemsStyle}>
             {option.type === 'checkbox' ? (
               option.items.map(item => {
-                const isChecked = (values[option.name] || []).includes(item.id);
-                const isDisabled = item.disabled;
+                const isChecked = values.hardware === 'xeon'
+                  ? key === 'strategy' && item.id === 'tp'
+                  : (values[option.name] || []).includes(item.id);
+                const isDisabled = item.disabled || values.hardware === 'xeon';
                 return (
                   <label key={item.id} style={{ ...labelBaseStyle, ...(isChecked ? checkedStyle : {}), ...(isDisabled ? disabledStyle : {}) }}>
                     <input type="checkbox" checked={isChecked} disabled={isDisabled} onChange={(e) => handleCheckboxChange(option.name, item.id, e.target.checked)} style={{ display: 'none' }} />
-                    {item.label}
+                    {values.hardware === 'xeon' && item.id === 'tp' ? 'TP 4 (Validated)' : item.label}
+                    {values.hardware === 'xeon' && item.id !== 'tp' && <small style={subtitleStyle}>Not validated on CPU</small>}
                     {item.subtitle && <small style={{ ...subtitleStyle, color: isChecked ? 'rgba(255,255,255,0.85)' : 'inherit' }}>{item.subtitle}</small>}
                   </label>
                 );

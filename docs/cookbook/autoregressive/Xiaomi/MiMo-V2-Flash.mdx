@@ -62,6 +62,8 @@ import { MiMoV2FlashDeployment } from "/src/snippets/autoregressive/mimo-v2-flas
 
 MI355X (ROCm) is validated in the selector above with `--tp-size 4`, Triton attention, and `--disable-custom-all-reduce`. `--tp-size 8` hit a QKV sharding error during validation. EAGLE speculative decoding is still WIP on MI355X.
 
+**Intel Xeon CPUs:** Select **XEON** for the Python-only TP4 baseline using the official FP8 checkpoint with BF16 computation and an 8192-token pool. Basic text generation passed on Intel Xeon 6972P (Granite Rapids), 384 logical CPUs and six NUMA domains, using unpatched upstream SGLang `626b95d` and matching CPU kernels. Checkpoint `8b60b288` completed all 313,060,774,832 indexed weight bytes and returned a coherent 239-token calculation with a final answer and normal stop. TP6 failed loading the sliding-attention sink bias after CPU head padding; use TP4. The CPU selection disables DP, MTP/speculation, GPU performance knobs and parser overrides. This is not evidence for dataset accuracy, the advertised long context, tools, speculative decoding, or performance. The installation examples above are GPU examples, not validated Xeon containers.
+
 ## Testing the deployment
 
 Once the server is running, test it with a chat completion request in another terminal:

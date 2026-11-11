@@ -21,6 +21,49 @@ function builder(name, selection) {
   return { ...api, state: () => state };
 }
 
+test("MiMo-V2-Flash preserves all GPU commands and exposes only validated TP4 CPU baseline", () => {
+  const entries = [];
+  for (const hardware of ["h200", "h100", "mi355x"]) {
+    for (let mask = 0; mask < 16; mask++) {
+      for (let reasoningMask = 0; reasoningMask < 4; reasoningMask++) {
+        const selection = {
+          hardware, modelname: "mimo-v2-flash",
+          strategy: ["tp", "dp", "mtp", "optimization"].filter((_, i) => mask & (1 << i)),
+          reasoning: ["reasoning", "toolcall"].filter((_, i) => reasoningMask & (1 << i)),
+        };
+        entries.push([selection, builder("mimo-v2-flash", selection).generateCommand()]);
+      }
+    }
+  }
+  assert.equal(createHash("sha256").update(JSON.stringify(entries)).digest("hex"),
+    "d04ea751428e24506dfeb379ce29069b4d109842d1153953383364c37230cbde");
+  const selection = {
+    hardware: "xeon", modelname: "mimo-v2-flash",
+    strategy: ["tp", "dp", "mtp", "optimization"], reasoning: ["reasoning", "toolcall"],
+  };
+  const api = builder("mimo-v2-flash", selection);
+  const command = api.generateCommand();
+  assert.match(command, /^SGLANG_USE_CPU_ENGINE=1 sglang serve/);
+  assert.match(command, /--model XiaomiMiMo\/MiMo-V2-Flash \\\n  --device cpu \\\n  --disable-overlap-schedule/);
+  assert.match(command, /--tp-size 4/);
+  assert.match(command, /--dtype bfloat16/);
+  assert.match(command, /--max-total-tokens 8192/);
+  assert.match(command, /--max-mamba-cache-size 64/);
+  assert.match(command, /--port 30000/);
+  assert.match(command, /--trust-remote-code/);
+  assert.doesNotMatch(command, /docker|CUDA|--model-path|--attn-dp|--speculative|--reasoning-parser|--tool-call-parser|--attention-backend|--mem-fraction/);
+  const switcher = builder("mimo-v2-flash", { ...selection, hardware: "h200" });
+  switcher.handleRadioChange("hardware", "xeon");
+  const baseline = { ...selection, strategy: ["tp"], reasoning: [] };
+  assert.deepEqual(switcher.state(), baseline);
+  switcher.handleCheckboxChange("strategy", "mtp", true);
+  switcher.handleCheckboxChange("reasoning", "reasoning", true);
+  switcher.handleRadioChange("modelname", "other");
+  assert.deepEqual(switcher.state(), baseline);
+  switcher.handleRadioChange("hardware", "h100");
+  assert.deepEqual(switcher.state(), { ...selection, hardware: "h100" });
+});
+
 test("DeepSeek-V3.1 adds only its validated TP6 CPU baseline and preserves existing recipes", () => {
   const entries = [];
   for (const hardware of ["h200", "b200", "mi300x", "mi325x", "mi355x", "xeon"]) {
