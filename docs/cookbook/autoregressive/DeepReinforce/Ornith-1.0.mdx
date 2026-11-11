@@ -39,7 +39,9 @@ For how to launch the image, see [Install -> Method 3: Using Docker](../../../do
 
 </Accordion>
 
-Pick an Ornith checkpoint to generate the launch command. The non-FP8 397B recipe requires an H200 single node in this matrix. The 397B-FP8 recipe is available on H100 and H200 with TP=8; H100 also supports the 35B and 9B checkpoints. The 35B recipes use tensor parallelism 2 in this matrix. The 9B checkpoint is dense and serves on a single GPU by default; the command panel makes that default explicit with `--tp 1`.
+Pick an Ornith checkpoint to generate the launch command. The GPU non-FP8 397B recipe requires an H200 single node in this matrix. The 397B-FP8 recipe is available on H100 and H200 with TP=8; H100 also supports the 35B and 9B checkpoints. The GPU 35B recipes use tensor parallelism 2 in this matrix. The 9B checkpoint is dense and serves on a single GPU by default; the command panel makes that default explicit with `--tp 1`.
+
+The **XEON** options use BF16 and Python on a single host. Install a matching native CPU build with the [CPU server guide](../../../docs/hardware-platforms/cpu_server) and keep `SGLANG_USE_CPU_ENGINE=1`; the CUDA pip/Docker examples above are not CPU installation instructions. The 397B **TP6** command uses an 8192-token pool and 64 Mamba cache slots, checked with its own complete checkpoint on a large-memory Intel Xeon 6972P using unpatched upstream main `626b95d503321e01bd145b12b2f82aac43d78fc0`. It completed a coherent relevant text response. This basic-generation check does not establish dataset accuracy, image/tool/parser support, advertised context length or throughput, so the CPU cell remains **unverified**. The GPU Playground parser examples below are not Xeon validation.
 
 import { Deployment } from "/src/snippets/_deployment.jsx";
 import { config }     from "/src/snippets/configs/deepreinforce-ai/ornith-1.0.jsx";
@@ -93,8 +95,8 @@ import { Playground } from "/src/snippets/_playground.jsx";
     <tr>
       <td style={{padding: "9px 12px", fontWeight: 500}}><a href="https://huggingface.co/deepreinforce-ai/Ornith-1.0-397B">deepreinforce-ai/Ornith-1.0-397B</a></td>
       <td style={{padding: "9px 12px"}}>BF16</td>
-      <td style={{padding: "9px 12px"}}>H200 only</td>
-      <td style={{padding: "9px 12px"}}>Flagship 397B MoE checkpoint; model-card baseline uses TP=8 on an H200 single node.</td>
+      <td style={{padding: "9px 12px"}}>H200 / XEON (text)</td>
+      <td style={{padding: "9px 12px"}}>Flagship 397B MoE checkpoint; H200 baseline uses TP=8, while the BF16 Xeon basic-text command uses TP=6.</td>
     </tr>
     <tr>
       <td style={{padding: "9px 12px", fontWeight: 500}}><a href="https://huggingface.co/deepreinforce-ai/Ornith-1.0-397B-FP8">deepreinforce-ai/Ornith-1.0-397B-FP8</a></td>

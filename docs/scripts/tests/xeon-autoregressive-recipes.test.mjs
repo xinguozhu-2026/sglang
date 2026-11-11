@@ -80,6 +80,10 @@ for (const [path, digest] of Object.entries(commandDigests)) {
       assert.deepEqual(cells.map((cell) => cell.match.variant).sort(), ["122b", "35b", "9b"]);
       assert.ok(cells.every((cell) => cell.match.quant === "bf16"));
     }
+    if (path === "deepreinforce-ai/ornith-1.0.jsx") {
+      assert.deepEqual(cells.map((cell) => cell.match.variant).sort(), ["35b", "397b", "9b"]);
+      assert.ok(cells.every((cell) => cell.match.quant === "bf16"));
+    }
     for (const cell of cells) {
       const selection = { ...cell.match, ...overlays };
       assert.deepEqual(modes(config, selection), ["python"]);
@@ -89,6 +93,25 @@ for (const [path, digest] of Object.entries(commandDigests)) {
       assert.match(command, /--device cpu/);
       assert.match(command, /--disable-overlap-schedule/);
       assert.doesNotMatch(command, /docker|--ep|--speculative|--kv-cache-dtype fp8/);
+      if (path === "deepreinforce-ai/ornith-1.0.jsx") {
+        assert.equal(config.playgroundFeatures.parsers.showWhen(selection), false);
+        assert.equal(config.playgroundFeatures.parsers.showWhen({ ...selection, hw: "h200" }), true);
+        const stale = { ...selection, quant: "fp8", nodes: "multi", runMode: "docker" };
+        assert.deepEqual(config.deriveState(stale), {
+          ...stale, quant: "bf16", strategy: "balanced", nodes: "single", runMode: "python",
+        });
+        const gpu = { ...stale, hw: "h200" };
+        assert.deepEqual(config.deriveState(gpu), gpu);
+        if (cell.match.variant === "397b") {
+          assert.match(command, /SGLANG_USE_CPU_ENGINE=1/);
+          assert.match(command, /--model deepreinforce-ai\/Ornith-1.0-397B /);
+          assert.match(command, /--tp 6/);
+          assert.match(command, /--dtype bfloat16/);
+          assert.match(command, /--max-total-tokens 8192/);
+          assert.match(command, /--max-mamba-cache-size 64/);
+          assert.doesNotMatch(command, /--reasoning-parser|--tool-call-parser/);
+        }
+      }
       for (const spec of config.overlayDims || []) {
         assert.equal(spec.showWhen?.(selection), false);
         for (const option of spec.options || []) {

@@ -12,6 +12,9 @@ export const config = {
     { id: "xeon", label: "XEON", vram: "CPU", vendor: "cpu" },
   ],
   runModes: (s) => s.hw === "xeon" ? ["python"] : ["python", "docker"],
+  deriveState: (s) => s.hw === "xeon"
+    ? { ...s, quant: "bf16", strategy: "balanced", nodes: "single", runMode: "python" }
+    : s,
 
   variants: [
     { id: "397b", label: "397B", subtitle: "MoE" },
@@ -200,6 +203,25 @@ export const config = {
         "--tp 1",
         "--context-length 262144",
         "--mem-fraction-static 0.85",
+        "--host {{HOST_IP}}",
+        "--port {{PORT}}",
+      ],
+    },
+    {
+      match: { hw: "xeon", variant: "397b", quant: "bf16", strategy: "balanced", nodes: "single" },
+      verified: false,
+      verificationStatus: "unverified",
+      env: ["SGLANG_USE_CPU_ENGINE=1"],
+      flags: [
+        "--model deepreinforce-ai/Ornith-1.0-397B",
+        "--device cpu",
+        "--disable-overlap-schedule",
+        "--served-model-name {{MODEL_NAME}}",
+        "--tp 6",
+        "--dtype bfloat16",
+        "--trust-remote-code",
+        "--max-total-tokens 8192",
+        "--max-mamba-cache-size 64",
         "--host {{HOST_IP}}",
         "--port {{PORT}}",
       ],
