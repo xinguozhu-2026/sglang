@@ -8,7 +8,7 @@ metatags:
 
 [GLM-4.5V](https://huggingface.co/zai-org/GLM-4.5V) is a state-of-the-art multimodal vision-language model from ZhipuAI, built on the next-generation flagship text foundation model GLM-4.5-Air (106B parameters, 12B active). It achieves SOTA performance among models of the same scale across 42 public vision-language benchmarks. Through efficient hybrid training, GLM-4.5V focuses on real-world usability and enables full-spectrum vision reasoning across diverse visual content types.
 
-**Hardware Support:** NVIDIA B200/H100/H200, AMD MI300X/MI325X/MI355X
+**Hardware Support:** NVIDIA B200/H100/H200, AMD MI300X/MI325X/MI355X, Intel Xeon CPUs (basic text generation)
 
 GLM-4.5V introduces several key features:
 
@@ -37,6 +37,12 @@ The GLM-4.5V offers models in various sizes and architectures, optimized for dif
 import { GLM45VDeployment } from "/src/snippets/autoregressive/glm-45v-deployment.jsx";
 
 <GLM45VDeployment />
+
+**Intel Xeon CPUs:** The XEON recipe uses the BF16 checkpoint at TP4 with an
+8192-token pool. This configuration was validated for basic text generation
+without runtime patches. FP8, image/video quality, parsers, tool calling,
+long-context operation and performance are not covered by this CPU check;
+the generator therefore locks the CPU recipe to the validated baseline.
 
 ### 3.2 Configuration Tips
 - **TTFT Optimization** : Set `SGLANG_USE_CUDA_IPC_TRANSPORT=1` to use CUDA IPC for transferring multimodal features, which significantly improves TTFT. This consumes additional memory and may require adjusting `--mem-fraction-static` and/or `--max-running-requests`. (additional memory is proportional to image size * number of images in current running requests.)

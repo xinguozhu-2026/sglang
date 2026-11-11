@@ -71,6 +71,50 @@ test("DeepSeek-V3.1 adds only its validated TP6 CPU baseline and preserves exist
   assert.deepEqual(switcher.state(), baseline);
 });
 
+test("GLM-4.5V preserves GPU commands and exposes only its validated BF16 CPU baseline", () => {
+  const entries = [];
+  for (const hardware of ["b200", "h100", "h200", "mi300x", "mi325x", "mi355x"]) {
+    for (const quantization of ["bf16", "fp8"]) {
+      for (const reasoning of ["enabled", "disabled"]) {
+        for (const toolcall of ["enabled", "disabled"]) {
+          const selection = { hardware, quantization, reasoning, toolcall };
+          entries.push([selection, builder("glm-45v", selection).generateCommand()]);
+        }
+      }
+    }
+  }
+  assert.equal(createHash("sha256").update(JSON.stringify(entries)).digest("hex"),
+    "62cd7d44cc3ba3c0e00efc88af8e8cb84e46dfb9234509641b3e9f3bcecc1fcb");
+  const selection = {
+    hardware: "xeon", quantization: "bf16", reasoning: "enabled", toolcall: "enabled",
+  };
+  const api = builder("glm-45v", selection);
+  const command = api.generateCommand();
+  assert.match(command, /^SGLANG_USE_CPU_ENGINE=1 python -m sglang.launch_server/);
+  assert.match(command, /--model zai-org\/GLM-4\.5V(?:\s|$)/);
+  assert.match(command, /--device cpu/);
+  assert.match(command, /--tp 4/);
+  assert.match(command, /--dtype bfloat16/);
+  assert.match(command, /--max-total-tokens 8192/);
+  assert.doesNotMatch(command, /CUDA|FP8|--reasoning-parser|--tool-call-parser|--mm-/);
+  assert.ok(api.options.hardware.items.some((item) => item.id === "xeon"));
+  for (const key of ["quantization", "reasoning", "toolcall"]) {
+    assert.equal(api.options[key].condition(selection), false);
+  }
+  assert.match(builder("glm-45v", { ...selection, quantization: "fp8" })
+    .generateCommand(), /^# Error:/);
+  const switcher = builder("glm-45v", { ...selection, hardware: "b200", quantization: "fp8" });
+  switcher.handleRadioChange("hardware", "xeon");
+  const baseline = {
+    ...selection, reasoning: "disabled", toolcall: "disabled",
+  };
+  assert.deepEqual(switcher.state(), baseline);
+  switcher.handleRadioChange("quantization", "fp8");
+  switcher.handleRadioChange("reasoning", "enabled");
+  switcher.handleRadioChange("toolcall", "enabled");
+  assert.deepEqual(switcher.state(), baseline);
+});
+
 test("legacy builders preserve existing platform commands", () => {
   const entries = [];
   for (const hardware of ["h200", "b200"]) {

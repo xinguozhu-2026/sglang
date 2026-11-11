@@ -10,12 +10,14 @@ export const GLM45VDeployment = () => {
         { id: 'h200', label: 'H200', default: false },
         { id: 'mi300x', label: 'MI300X', default: false },
         { id: 'mi325x', label: 'MI325X', default: false },
-        { id: 'mi355x', label: 'MI355X', default: false }
+        { id: 'mi355x', label: 'MI355X', default: false },
+        { id: 'xeon', label: 'XEON', default: false }
       ]
     },
     quantization: {
       name: 'quantization',
       title: 'Quantization',
+      condition: (v) => v.hardware !== 'xeon',
       items: [
         { id: 'bf16', label: 'BF16', default: true },
         { id: 'fp8', label: 'FP8', default: false }
@@ -24,6 +26,7 @@ export const GLM45VDeployment = () => {
     reasoning: {
       name: 'reasoning',
       title: 'Reasoning Parser',
+      condition: (v) => v.hardware !== 'xeon',
       items: [
         { id: 'enabled', label: 'Enabled', default: true },
         { id: 'disabled', label: 'Disabled', default: false }
@@ -32,6 +35,7 @@ export const GLM45VDeployment = () => {
     toolcall: {
       name: 'toolcall',
       title: 'Tool Call Parser',
+      condition: (v) => v.hardware !== 'xeon',
       items: [
         { id: 'enabled', label: 'Enabled', default: true },
         { id: 'disabled', label: 'Disabled', default: false }
@@ -68,12 +72,35 @@ export const GLM45VDeployment = () => {
   }, []);
 
   const handleRadioChange = (optionName, value) => {
-    setValues(prev => ({ ...prev, [optionName]: value }));
+    setValues(prev => {
+      if (prev.hardware === 'xeon' && ['quantization', 'reasoning', 'toolcall'].includes(optionName)) return prev;
+      const next = { ...prev, [optionName]: value };
+      if (optionName === 'hardware' && value === 'xeon') {
+        next.quantization = 'bf16';
+        next.reasoning = 'disabled';
+        next.toolcall = 'disabled';
+      }
+      return next;
+    });
   };
 
   // Generate command
   const generateCommand = () => {
     const { hardware, quantization, reasoning, toolcall } = values;
+
+    if (hardware === 'xeon') {
+      if (quantization !== 'bf16') {
+        return '# Error: Only the BF16 GLM-4.5V checkpoint is validated on Intel Xeon CPUs.';
+      }
+      return 'SGLANG_USE_CPU_ENGINE=1 python -m sglang.launch_server \\\n' +
+        '  --model zai-org/GLM-4.5V \\\n' +
+        '  --device cpu \\\n' +
+        '  --disable-overlap-schedule \\\n' +
+        '  --tp 4 \\\n' +
+        '  --dtype bfloat16 \\\n' +
+        '  --max-total-tokens 8192 \\\n' +
+        '  --trust-remote-code';
+    }
 
     // Model configuration
     const config = {
@@ -136,7 +163,7 @@ export const GLM45VDeployment = () => {
 
   return (
     <div style={containerStyle} className="not-prose">
-      {Object.entries(options).map(([key, option]) => (
+      {Object.entries(options).filter(([, option]) => !option.condition || option.condition(values)).map(([key, option]) => (
         <div key={key} style={cardStyle}>
           <div style={titleStyle}>{option.title}</div>
           <div style={itemsStyle}>
