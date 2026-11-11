@@ -26,6 +26,7 @@ export const GLM46VDeployment = () => {
     quantization: {
       name: 'quantization',
       title: 'Quantization',
+      condition: (values) => values.hardware !== 'xeon',
       items: [
         { id: 'bf16', label: 'BF16', default: true },
         { id: 'fp8', label: 'FP8', default: false }
@@ -87,7 +88,7 @@ export const GLM46VDeployment = () => {
     setValues(prev => {
       const next = { ...prev, [optionName]: value };
       if (next.hardware === 'xeon') {
-        next.modelsize = '9b';
+        if (optionName === 'hardware') next.modelsize = '9b';
         next.quantization = 'bf16';
         next.reasoning = 'disabled';
         next.toolcall = 'disabled';
@@ -101,10 +102,12 @@ export const GLM46VDeployment = () => {
     const { hardware, modelsize, quantization, reasoning, toolcall } = values;
 
     if (hardware === 'xeon') {
-      if (modelsize !== '9b' || quantization !== 'bf16') {
-        return '# Error: Only GLM-4.6V-Flash BF16 is validated on Xeon.';
+      if (!['106b', '9b'].includes(modelsize) || quantization !== 'bf16') {
+        return '# Error: Only GLM-4.6V and GLM-4.6V-Flash BF16 are validated on Xeon.';
       }
-      return 'python -m sglang.launch_server \\\n  --model zai-org/GLM-4.6V-Flash \\\n  --device cpu \\\n  --disable-overlap-schedule \\\n  --tp 2 \\\n  --dtype bfloat16 \\\n  --trust-remote-code \\\n  --max-total-tokens 8192 \\\n  --host 0.0.0.0 --port 30000';
+      const modelName = modelsize === '9b' ? 'GLM-4.6V-Flash' : 'GLM-4.6V';
+      const tp = modelsize === '9b' ? 2 : 4;
+      return `python -m sglang.launch_server \\\n  --model zai-org/${modelName} \\\n  --device cpu \\\n  --disable-overlap-schedule \\\n  --tp ${tp} \\\n  --dtype bfloat16 \\\n  --trust-remote-code \\\n  --max-total-tokens 8192 \\\n  --host 0.0.0.0 --port 30000`;
     }
 
     // Model configurations

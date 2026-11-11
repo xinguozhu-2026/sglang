@@ -66,7 +66,7 @@ import { GLM46VDeployment } from "/src/snippets/autoregressive/glm-46v-deploymen
 
 <GLM46VDeployment />
 
-The Intel Xeon CPU recipe is a basic **text-generation** baseline for GLM-4.6V-Flash BF16 at TP=2 with an 8192-token pool. TP=4 fails the CPU KV-cache head-padding path; it is not the supported configuration. Image/video quality, parsers, tool calls and long-context behavior are not validated by this baseline. Use the [CPU installation guide](../../../docs/hardware-platforms/cpu_server) rather than the CUDA installation commands above.
+The Intel Xeon CPU recipes are basic **text-generation** baselines for GLM-4.6V (106B) BF16 at TP=4 and GLM-4.6V-Flash (9B) BF16 at TP=2, each with an 8192-token pool. For the Flash model specifically, TP=4 fails the CPU KV-cache head-padding path; use its validated TP=2 configuration. Image/video quality, parsers, tool calls and long-context behavior are not validated by these baselines. Use the [CPU installation guide](../../../docs/hardware-platforms/cpu_server) rather than the CUDA installation commands above.
 
 ### 3.2 Configuration Tips
 - **TTFT Optimization** : Set `SGLANG_USE_CUDA_IPC_TRANSPORT=1` to use CUDA IPC for transferring multimodal features, which significantly improves TTFT. This consumes additional memory and may require adjusting `--mem-fraction-static` and/or `--max-running-requests`. (additional memory is proportional to image size * number of images in current running requests.)

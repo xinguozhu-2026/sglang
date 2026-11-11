@@ -176,7 +176,7 @@ test("Gemma 12B Xeon exposes only the full-checkpoint validated baseline", () =>
   });
 });
 
-test("GLM4.6V preserves GPU commands and exposes only the validated Flash CPU baseline", () => {
+test("GLM4.6V preserves GPU commands and exposes only validated BF16 CPU baselines", () => {
   const entries = [];
   for (const hardware of ["b200", "b300", "h100", "h200", "mi300x", "mi325x", "mi355x"]) {
     for (const modelsize of ["106b", "9b"]) {
@@ -203,7 +203,7 @@ test("GLM4.6V preserves GPU commands and exposes only the validated Flash CPU ba
   assert.match(command, /--tp 2/);
   assert.match(command, /--max-total-tokens 8192/);
   assert.doesNotMatch(command, /CUDA|--reasoning-parser|--tool-call-parser|--mm-enable/);
-  for (const key of ["reasoning", "toolcall"]) {
+  for (const key of ["quantization", "reasoning", "toolcall"]) {
     assert.equal(api.options[key].condition(selection), false);
   }
   const switcher = builder("glm-46v", { ...selection, hardware: "b200", modelsize: "106b", quantization: "fp8" });
@@ -211,7 +211,15 @@ test("GLM4.6V preserves GPU commands and exposes only the validated Flash CPU ba
   assert.deepEqual(switcher.state(), {
     ...selection, reasoning: "disabled", toolcall: "disabled",
   });
-  for (const delta of [{ modelsize: "106b" }, { quantization: "fp8" }]) {
+  switcher.handleRadioChange("modelsize", "106b");
+  assert.equal(switcher.state().modelsize, "106b");
+  const fullCommand = builder("glm-46v", switcher.state()).generateCommand();
+  assert.match(fullCommand, /--model zai-org\/GLM-4.6V \\/);
+  assert.match(fullCommand, /--tp 4/);
+  assert.match(fullCommand, /--dtype bfloat16/);
+  assert.match(fullCommand, /--max-total-tokens 8192/);
+  assert.doesNotMatch(fullCommand, /Flash|CUDA|--reasoning-parser|--tool-call-parser|--mm-enable/);
+  for (const delta of [{ modelsize: "unknown" }, { quantization: "fp8" }]) {
     assert.match(builder("glm-46v", { ...selection, ...delta }).generateCommand(), /^# Error:/);
   }
 });
