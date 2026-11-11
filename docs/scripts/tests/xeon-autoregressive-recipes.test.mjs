@@ -15,6 +15,7 @@ const commandDigests = {
   "IFM/jais-3.jsx": "7581cf5bea5568989223471c115ab3bb3208a5574f56d6a18d09fb94afc786c0",
   "poolside/laguna-xs21.jsx": "adbe322201ea8aa8dc7043e98506945efa3bdce7545fb2e01ad618788c02c949",
   "poolside/laguna-s21.jsx": "a932c167c5f2cde37ab672dd48091a81888b34065f0f27d85593db795c7808e3",
+  "poolside/laguna-m1.jsx": "cb87be47737b82618cdea727cd4664ffc043fe8c9555935baee879c6bac7d074",
   "openbmb/minicpm5-2b.jsx": "5c6d6cdae9c6c7d3de43073745ab1ca6c32d43310df0767dae20c3bd256a60f6",
   "Qwen/qwen3.8-27b.jsx": "284b74186dda780d1fc4993d68cf183600fc947dad268e20c75e0e778268d7fa",
   "meta-models/muse-glimmer.jsx": "173b0a76052a608d14d459ec90fcfa1bc12a4ba8b236bbe225b12f7de8a03ac9",
@@ -145,6 +146,26 @@ for (const [path, digest] of Object.entries(commandDigests)) {
         assert.doesNotMatch(command, /SGLANG_SHARED_EXPERT_TP1|--reasoning-parser|--tool-call-parser/);
         assert.equal(config.playgroundFeatures.attention.showWhen(selection), false);
         assert.equal(config.playgroundFeatures.parsers.showWhen(selection), false);
+      }
+      if (path === "poolside/laguna-m1.jsx") {
+        assert.equal(cells.length, 1);
+        assert.equal(cell.match.quant, "bf16");
+        assert.match(command, /SGLANG_USE_CPU_ENGINE=1/);
+        assert.match(command, /--model poolside\/Laguna-M.1 /);
+        assert.match(command, /--tp 4/);
+        assert.match(command, /--dtype bfloat16/);
+        assert.match(command, /--max-total-tokens 8192/);
+        assert.doesNotMatch(command, /--reasoning-parser|--tool-call-parser|--fp8|--enable-hierarchical-cache|--disaggregation/);
+        for (const axis of ["attention", "moe", "parsers", "hicache", "pdDisagg"]) {
+          assert.equal(config.playgroundFeatures[axis].showWhen(selection), false);
+          assert.equal(config.playgroundFeatures[axis].showWhen({ ...selection, hw: "b200" }), true);
+        }
+        const stale = { ...selection, quant: "nvfp4", nodes: "multi", runMode: "docker" };
+        assert.deepEqual(config.deriveState(stale), {
+          ...stale, quant: "bf16", nodes: "single", runMode: "python",
+        });
+        const gpu = { ...stale, hw: "b200" };
+        assert.deepEqual(config.deriveState(gpu), gpu);
       }
       if (path === "Qwen/qwen3.8-27b.jsx") {
         assert.equal(cells.length, 1);

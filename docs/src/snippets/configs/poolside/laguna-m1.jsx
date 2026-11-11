@@ -30,7 +30,14 @@
 export const config = {
   modelName: "Laguna-M.1",
 
-  supportedHardware: ["h200", "b200", "b300", "gb200", "gb300"],
+  supportedHardware: ["h200", "b200", "b300", "gb200", "gb300", "xeon"],
+  hardware: [
+    { id: "xeon", label: "XEON", vram: "CPU", vendor: "cpu" },
+  ],
+  runModes: (s) => s.hw === "xeon" ? ["python"] : ["python", "docker"],
+  deriveState: (s) => s.hw === "xeon"
+    ? { ...s, variant: "default", quant: "bf16", strategy: "balanced", nodes: "single", runMode: "python" }
+    : s,
 
   variants: [
     { id: "default", label: "Default" },
@@ -115,6 +122,7 @@ sgl-eval run gsm8k \\
   },
 
   playgroundFeatures: {
+    normalizeDeltas: (deltas, derived, base) => base.hw === "xeon" ? {} : deltas,
 
     // M.1 is global-attention (no SWA); expose TP + DP-Attention here. No CP: the default
     // trtllm_mha backend has no CP-aware KV-store (crashes), and the engine's built-in attention CP
@@ -125,6 +133,7 @@ sgl-eval run gsm8k \\
     // baseline) but ~15–28% slower on this GQA model (8 KV heads). Playground experiment only —
     // deliberately NOT in the shipped Balanced recipe.
     attention: {
+      showWhen: (s) => s.hw !== "xeon",
       knobs: [
         { id: "tp",     label: "TP",           values: [null, 1, 2, 4, 8] },
         { id: "dpAttn", label: "DP-Attention", values: [null, false, 1, 2, 4, 8],
@@ -138,12 +147,14 @@ sgl-eval run gsm8k \\
     // low-latency internode kernel cap of 11 (internode_ll.cu kNumMaxTopK=11) → assert at decode
     // CUDA-graph capture, and `--deepep-mode normal` is NotImplemented for unquantized weights. Use EP.
     moe: {
+      showWhen: (s) => s.hw !== "xeon",
       ep: { label: "EP", values: [null, 1, 2, 4, 8] },
     },
 
     // Reasoning + tool-call parsers (poolside_v1, same family as Laguna-XS.2). ALSO baked into
     // every Deploy cell below (the maintainer's baseline carries them).
     parsers: {
+      showWhen: (s) => s.hw !== "xeon",
       items: [
         { id: "reasoning", label: "Reasoning Parser", flag: "--reasoning-parser poolside_v1" },
         { id: "toolCall",  label: "Tool Call Parser", flag: "--tool-call-parser poolside_v1" },
@@ -157,6 +168,7 @@ sgl-eval run gsm8k \\
     // agentic coding, repeated long contexts. "Enable" emits --enable-hierarchical-cache (+host L2);
     // Write policy is optional. (L3 storage backends exist but were not validated, so none exposed.)
     hicache: {
+      showWhen: (s) => s.hw !== "xeon",
       writePolicies: [
         { id: "auto",          label: "Auto" },
         { id: "write_through", label: "Write-through" },
@@ -168,6 +180,7 @@ sgl-eval run gsm8k \\
     // index buffer), so it disaggregates with just the --disaggregation-* flags — no model-specific
     // backend pinning. Verified on 2×8×H200 (TP8+TP8, BF16) over InfiniBand.
     pdDisagg: {
+      showWhen: (s) => s.hw !== "xeon",
       modes: [
         { id: "off",     label: "Off" },
         { id: "prefill", label: "Prefill role" },
@@ -416,6 +429,23 @@ sgl-eval run gsm8k \\
         "--reasoning-parser poolside_v1",
         "--tool-call-parser poolside_v1",
         "--tp 4",
+        "--host {{HOST_IP}}",
+        "--port {{PORT}}",
+      ],
+    },
+    {
+      match: { hw: "xeon", variant: "default", quant: "bf16", strategy: "balanced", nodes: "single" },
+      verified: false,
+      verificationStatus: "unverified",
+      env: ["SGLANG_USE_CPU_ENGINE=1"],
+      flags: [
+        "--model {{MODEL_NAME}}",
+        "--device cpu",
+        "--disable-overlap-schedule",
+        "--tp 4",
+        "--dtype bfloat16",
+        "--trust-remote-code",
+        "--max-total-tokens 8192",
         "--host {{HOST_IP}}",
         "--port {{PORT}}",
       ],

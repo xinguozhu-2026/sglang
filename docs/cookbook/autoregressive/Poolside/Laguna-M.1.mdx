@@ -1,6 +1,6 @@
 ---
 title: Laguna-M.1
-description: "Deploy poolside's Laguna-M.1 — a 225B-parameter Mixture-of-Experts model (23B active) for agentic coding — with SGLang on NVIDIA H200, B200, B300, GB200, and GB300, across BF16, FP8, and NVFP4."
+description: "Deploy poolside's Laguna-M.1 — a 225B-parameter Mixture-of-Experts model (23B active) for agentic coding — with SGLang on NVIDIA H200, B200, B300, GB200, and GB300, across BF16, FP8, and NVFP4, or on Intel Xeon CPUs with the BF16 basic-generation recipe."
 ---
 
 ## Deployment
@@ -46,6 +46,8 @@ For how to launch the image, see [Install → Method 3: Using Docker](../../../d
 </Accordion>
 
 Pick your hardware + quantization to generate the launch command. Laguna-M.1 ships a single **Balanced** recipe per cell — poolside's recommended operating point, a good speed/throughput trade-off for typical multi-user serving. The 8-GPU HGX platforms (H200 / B200 / B300) use `--tp 8`; the 4-GPU Grace-Blackwell single nodes (GB200 / GB300) use `--tp 4`.
+
+The **XEON** option is a BF16, single-host **TP4 basic-text** baseline with an 8192-token pool, checked on Intel Xeon 6972P using unpatched upstream main `626b95d503321e01bd145b12b2f82aac43d78fc0`. TP6 cannot divide the model's 64 attention heads. Install a matching native CPU build using the [CPU server guide](../../../docs/hardware-platforms/cpu_server); keep `SGLANG_USE_CPU_ENGINE=1`. The own complete checkpoint returned a coherent completed response in the default non-thinking mode. This is not dataset accuracy, advertised-context or throughput evidence, so the cell remains **unverified**. FP8/NVFP4, Docker, parsers, EP/DP, HiCache and disaggregated serving are not enabled by this Xeon check; the GPU examples below are not CPU validation.
 
 import { Deployment } from "/src/snippets/_deployment.jsx";
 import { config }     from "/src/snippets/configs/poolside/laguna-m1.jsx";
