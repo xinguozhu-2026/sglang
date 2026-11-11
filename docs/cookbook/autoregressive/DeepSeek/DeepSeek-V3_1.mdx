@@ -30,6 +30,13 @@ import { DeepSeekV31Deployment } from "/src/snippets/autoregressive/deepseek-v31
 
 <DeepSeekV31Deployment />
 
+**Intel Xeon CPUs:** Select XEON and then DeepSeek-V3.1 for the validated
+single-host TP6 basic text-generation recipe using the official FP8 checkpoint,
+BF16 computation and an 8192-token pool. Install CPU kernels matching the selected
+SGLang revision. This baseline does not enable Terminus, DP attention, parsers,
+tool calling or speculative decoding. The existing channel-INT8 recipe and
+hardware-selection default are unchanged.
+
 ### 3.2 Configuration Tips
 
 DeepSeek-V3.1 shares the same model architecture as DeepSeek-V3, so the same hardware and optimization recommendations apply.

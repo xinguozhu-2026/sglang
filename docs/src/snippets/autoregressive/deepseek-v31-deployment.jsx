@@ -1,4 +1,6 @@
 export const DeepSeekV31Deployment = () => {
+  const isXeonV31 = (v) => v.hardware === 'xeon' && v.modelname === 'v31';
+
   // Config options
   const options = {
     hardware: {
@@ -18,13 +20,14 @@ export const DeepSeekV31Deployment = () => {
       title: 'Model Name',
       items: [
         { id: 'v31', label: 'DeepSeek-V3.1', default: true },
-        { id: 'v31terminus', label: 'DeepSeek-V3.1-Terminus', default: false },
+        { id: 'v31terminus', label: 'DeepSeek-V3.1-Terminus', default: false, disabledWhen: (v) => v.hardware === 'xeon' },
         { id: 'v31terminusint8', label: 'DeepSeek-V3.1-Terminus-Channel-int8', default: false, xeonOnly: true }
       ]
     },
     strategy: {
       name: 'strategy',
       title: 'Deployment Strategy',
+      condition: (v) => !isXeonV31(v),
       type: 'checkbox',
       items: [
         { id: 'tp', label: 'TP', default: true, required: true },
@@ -36,6 +39,7 @@ export const DeepSeekV31Deployment = () => {
     reasoningParser: {
       name: 'reasoningParser',
       title: 'Reasoning Parser',
+      condition: (v) => !isXeonV31(v),
       items: [
         { id: 'disabled', label: 'Disabled', default: true },
         { id: 'enabled', label: 'Enabled', default: false }
@@ -44,6 +48,7 @@ export const DeepSeekV31Deployment = () => {
     toolcall: {
       name: 'toolcall',
       title: 'Tool Call Parser',
+      condition: (v) => !isXeonV31(v),
       items: [
         { id: 'disabled', label: 'Disabled', default: true },
         { id: 'enabled', label: 'Enabled', default: false }
@@ -86,6 +91,8 @@ export const DeepSeekV31Deployment = () => {
 
   const handleRadioChange = (optionName, value) => {
     setValues(prev => {
+      if (isXeonV31(prev) && ['reasoningParser', 'toolcall'].includes(optionName)) return prev;
+      if (prev.hardware === 'xeon' && optionName === 'modelname' && value === 'v31terminus') return prev;
       const next = { ...prev, [optionName]: value };
       if (optionName === 'hardware') {
         if (next.hardware === 'xeon') {
@@ -105,12 +112,18 @@ export const DeepSeekV31Deployment = () => {
           return true;
         });
       }
+      if (isXeonV31(next)) {
+        next.strategy = ['tp'];
+        next.reasoningParser = 'disabled';
+        next.toolcall = 'disabled';
+      }
       return next;
     });
   };
 
   const handleCheckboxChange = (optionName, itemId, isChecked) => {
     setValues(prev => {
+      if (isXeonV31(prev)) return prev;
       const currentValues = prev[optionName] || [];
       if (isChecked) {
         return { ...prev, [optionName]: [...currentValues, itemId] };
@@ -134,6 +147,20 @@ export const DeepSeekV31Deployment = () => {
 
     const modelName = modelMap[modelname];
     const isXeon = hardware === 'xeon';
+
+    if (isXeon && modelname === 'v31terminus') {
+      return '# Error: DeepSeek-V3.1-Terminus has not been validated on Intel Xeon CPUs.';
+    }
+    if (isXeonV31(values)) {
+      return 'SGLANG_USE_CPU_ENGINE=1 python3 -m sglang.launch_server \\\n' +
+        '  --model deepseek-ai/DeepSeek-V3.1 \\\n' +
+        '  --device cpu \\\n' +
+        '  --disable-overlap-schedule \\\n' +
+        '  --tp 6 \\\n' +
+        '  --dtype bfloat16 \\\n' +
+        '  --max-total-tokens 8192 \\\n' +
+        '  --trust-remote-code';
+    }
 
     let cmd = 'python3 -m sglang.launch_server \\\n';
     cmd += `  --model-path ${modelName}`;
@@ -197,7 +224,7 @@ export const DeepSeekV31Deployment = () => {
 
   return (
     <div style={containerStyle} className="not-prose">
-      {Object.entries(options).map(([key, option]) => (
+      {Object.entries(options).filter(([, option]) => !option.condition || option.condition(values)).map(([key, option]) => (
         <div key={key} style={cardStyle}>
           <div style={titleStyle}>{option.title}</div>
           <div style={itemsStyle}>
@@ -217,9 +244,11 @@ export const DeepSeekV31Deployment = () => {
             ) : (
               option.items.map(item => {
                 const isChecked = values[option.name] === item.id;
-                const isDisabled = item.xeonOnly && values.hardware !== 'xeon';
+                const isPlatformDisabled = item.xeonOnly && values.hardware !== 'xeon';
+                const isValidationDisabled = typeof item.disabledWhen === 'function' && item.disabledWhen(values);
+                const isDisabled = isPlatformDisabled || isValidationDisabled;
                 return (
-                  <label key={item.id} title={isDisabled ? 'Only available when XEON hardware is selected' : undefined} style={{ ...labelBaseStyle, ...(isChecked ? checkedStyle : {}), ...(isDisabled ? disabledStyle : {}) }}>
+                  <label key={item.id} title={isPlatformDisabled ? 'Only available when XEON hardware is selected' : isValidationDisabled ? 'Not validated on Intel Xeon CPUs' : undefined} style={{ ...labelBaseStyle, ...(isChecked ? checkedStyle : {}), ...(isDisabled ? disabledStyle : {}) }}>
                     <input type="radio" name={option.name} value={item.id} checked={isChecked} disabled={isDisabled} onChange={() => !isDisabled && handleRadioChange(option.name, item.id)} style={{ display: 'none' }} />
                     {item.label}
                     {item.subtitle && <small style={{ ...subtitleStyle, color: isChecked ? 'rgba(255,255,255,0.85)' : 'inherit' }}>{item.subtitle}</small>}

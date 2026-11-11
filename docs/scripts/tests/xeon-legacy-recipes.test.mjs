@@ -15,10 +15,61 @@ function builder(name, selection) {
     : [false, () => {}];
   const api = new Function("useState", "useEffect", `${body}
     return { generateCommand, handleRadioChange, options,
+      handleCheckboxChange: typeof handleCheckboxChange === "undefined" ? null : handleCheckboxChange,
       resolveItems: typeof resolveItems === "undefined" ? null : resolveItems };
   `)(useState, () => {});
   return { ...api, state: () => state };
 }
+
+test("DeepSeek-V3.1 adds only its validated TP6 CPU baseline and preserves existing recipes", () => {
+  const entries = [];
+  for (const hardware of ["h200", "b200", "mi300x", "mi325x", "mi355x", "xeon"]) {
+    for (const modelname of hardware === "xeon" ? ["v31terminusint8"] : ["v31", "v31terminus"]) {
+      const strategies = [["tp"], ["tp", "dp"],
+        ...(hardware === "xeon" ? [] : [["tp", "ep"], ["tp", "mtp"], ["tp", "dp", "ep", "mtp"]])];
+      for (const strategy of strategies) {
+        for (const reasoningParser of ["disabled", "enabled"]) {
+          for (const toolcall of ["disabled", "enabled"]) {
+            const selection = { hardware, modelname, strategy, reasoningParser, toolcall };
+            entries.push([selection, builder("deepseek-v31", selection).generateCommand()]);
+          }
+        }
+      }
+    }
+  }
+  assert.equal(createHash("sha256").update(JSON.stringify(entries)).digest("hex"),
+    "e7e6aa7d2d49db81d4272386c124a0dbfb8cfe92b4593dfc0313638af877df7c");
+  const selection = {
+    hardware: "xeon", modelname: "v31", strategy: ["tp", "dp", "ep", "mtp"],
+    reasoningParser: "enabled", toolcall: "enabled",
+  };
+  const api = builder("deepseek-v31", selection);
+  const command = api.generateCommand();
+  assert.match(command, /^SGLANG_USE_CPU_ENGINE=1 python3 -m sglang.launch_server/);
+  assert.match(command, /--model deepseek-ai\/DeepSeek-V3\.1(?:\s|$)/);
+  assert.match(command, /--device cpu/);
+  assert.match(command, /--tp 6/);
+  assert.match(command, /--dtype bfloat16/);
+  assert.match(command, /--max-total-tokens 8192/);
+  assert.doesNotMatch(command, /Terminus|--dp|--ep|--quantization|--speculative|--reasoning-parser|--tool-call-parser/);
+  for (const key of ["strategy", "reasoningParser", "toolcall"]) {
+    assert.equal(api.options[key].condition(selection), false);
+  }
+  assert.equal(api.options.modelname.items.find((item) => item.id === "v31terminus")
+    .disabledWhen(selection), true);
+  assert.match(builder("deepseek-v31", { ...selection, modelname: "v31terminus" })
+    .generateCommand(), /^# Error:/);
+  const switcher = builder("deepseek-v31", { ...selection, modelname: "v31terminusint8" });
+  switcher.handleRadioChange("modelname", "v31");
+  const baseline = {
+    ...selection, strategy: ["tp"], reasoningParser: "disabled", toolcall: "disabled",
+  };
+  assert.deepEqual(switcher.state(), baseline);
+  switcher.handleRadioChange("modelname", "v31terminus");
+  switcher.handleRadioChange("reasoningParser", "enabled");
+  switcher.handleCheckboxChange("strategy", "dp", true);
+  assert.deepEqual(switcher.state(), baseline);
+});
 
 test("legacy builders preserve existing platform commands", () => {
   const entries = [];
