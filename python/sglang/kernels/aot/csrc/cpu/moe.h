@@ -160,6 +160,31 @@ inline void silu_and_mul_stub(
 }
 
 template <typename scalar_t, typename input_t>
+inline void silu_clamped_and_mul_stub(
+    scalar_t* __restrict__ out,
+    const input_t* __restrict__ gate,
+    const input_t* __restrict__ up,
+    int64_t size,
+    float limit) {
+  using bVec = at::vec::Vectorized<scalar_t>;
+  using fVec = at::vec::Vectorized<float>;
+  const fVec hi(limit), lo(-limit);
+  int64_t d = 0;
+  for (; d + bVec::size() <= size; d += bVec::size()) {
+    auto [g0, g1] = load_float_vec2(gate + d);
+    auto [u0, u1] = load_float_vec2(up + d);
+    g0 = fast_silu(at::vec::minimum(g0, hi)) * at::vec::clamp(u0, lo, hi);
+    g1 = fast_silu(at::vec::minimum(g1, hi)) * at::vec::clamp(u1, lo, hi);
+    convert_from_float_ext<scalar_t>(g0, g1).store(out + d);
+  }
+  for (; d < size; ++d) {
+    const float g = std::min(static_cast<float>(gate[d]), limit);
+    const float u = std::clamp(static_cast<float>(up[d]), -limit, limit);
+    out[d] = static_cast<scalar_t>((g / (1.f + std::exp(-g))) * u);
+  }
+}
+
+template <typename scalar_t, typename input_t>
 inline void gelu_and_mul_stub(
     scalar_t* __restrict__ out, const input_t* __restrict__ input, const input_t* __restrict__ input2, int64_t size) {
   static_assert(
