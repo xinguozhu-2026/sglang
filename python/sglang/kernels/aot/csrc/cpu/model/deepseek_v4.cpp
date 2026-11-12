@@ -4,8 +4,6 @@
 #include "../common.h"
 #include "../vec.h"
 
-namespace dsv4_cpu {
-
 namespace {
 
 template <typename scalar_t>
@@ -148,30 +146,6 @@ sqrtsoftplus_topk_cpu(const at::Tensor& logits, const std::optional<at::Tensor>&
     weights = weights / (weights.sum(-1, true) + 1e-20);
   }
   return {weights, ids.to(at::kInt)};
-}
-
-void silu_and_mul_clamp_cpu(const at::Tensor& input, at::Tensor output, double limit) {
-  CHECK_INPUT(input);
-  CHECK_INPUT(output);
-  TORCH_CHECK(
-      input.dim() == 2 && output.dim() == 2 && input.size(0) == output.size(0) && input.size(1) == 2 * output.size(1) &&
-          input.scalar_type() == output.scalar_type(),
-      "Invalid clamped SwiGLU shape/dtype");
-  TORCH_CHECK(limit > 0, "SwiGLU limit must be positive");
-  const int64_t hidden = output.size(1);
-  AT_DISPATCH_REDUCED_FLOATING_TYPES(input.scalar_type(), "silu_and_mul_clamp_cpu", [&] {
-    const scalar_t* x = input.const_data_ptr<scalar_t>();
-    scalar_t* y = output.data_ptr<scalar_t>();
-    at::parallel_for(0, output.numel(), GRAIN_SIZE, [&](int64_t begin, int64_t end) {
-      for (int64_t i = begin; i < end; ++i) {
-        const int64_t offset = i / hidden * 2 * hidden + i % hidden;
-        const float gate = std::min(static_cast<float>(x[offset]), static_cast<float>(limit));
-        const float up =
-            std::clamp(static_cast<float>(x[offset + hidden]), -static_cast<float>(limit), static_cast<float>(limit));
-        y[i] = static_cast<scalar_t>((gate / (1.f + std::exp(-gate))) * up);
-      }
-    });
-  });
 }
 
 std::tuple<at::Tensor, at::Tensor, at::Tensor> hc_split_sinkhorn_cpu(
@@ -370,5 +344,3 @@ void norm_rope_cpu(
     });
   });
 }
-
-}  // namespace dsv4_cpu

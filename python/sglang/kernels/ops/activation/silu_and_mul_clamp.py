@@ -10,9 +10,10 @@ from sglang.kernels.jit.utils import (
     load_jit,
     make_cpp_args,
 )
-from sglang.srt.utils import is_xpu
+from sglang.srt.utils import is_cpu, is_xpu
 
 _is_xpu = is_xpu()
+_is_cpu = is_cpu()
 
 
 def make_name(name: str) -> str:
@@ -59,8 +60,8 @@ def silu_and_mul_clamp(
     output: torch.Tensor,
     swiglu_limit: float,
 ) -> None:
-    if input.device.type == "cpu":
-        torch.ops.sgl_kernel.silu_and_mul_clamp_cpu(input, output, swiglu_limit)
+    if _is_cpu:
+        torch.ops.sgl_kernel.silu_and_mul_clamp_cpu(input, output, float(swiglu_limit))
         return
     if _is_xpu:
         from sgl_kernel import silu_and_mul_clamp

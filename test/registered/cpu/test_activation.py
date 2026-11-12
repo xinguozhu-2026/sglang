@@ -5,7 +5,6 @@ import sgl_kernel  # noqa: F401
 import torch
 import torch.nn.functional as F
 
-from sglang.kernels.ops.activation.silu_and_mul_clamp import silu_and_mul_clamp
 from sglang.srt.server_args import ServerArgs, set_global_server_args_for_scheduler
 from sglang.test.ci.ci_register import register_cpu_ci
 from sglang.test.cpu_test_utils import GeluAndMul, SiluAndMul, precision
@@ -46,14 +45,17 @@ def test_activation(m, n, dtype):
     )
 
 
-def test_dsv41_clipped_silu_is_not_gpt_oss_swiglu():
-    """Negative gates stay unclipped; up has no GPT-OSS +1 bias."""
-    x = torch.tensor([[-20, 20, 2, -2, 20, -20, 3, -4]], dtype=torch.bfloat16)
-    output = torch.empty(1, 4, dtype=torch.bfloat16)
-    silu_and_mul_clamp(x, output, 10.0)
+@pytest.mark.parametrize("dtype", DTYPES)
+@pytest.mark.parametrize("n", N)
+@pytest.mark.parametrize("m", M)
+@pytest.mark.parametrize("limit", [3, 10, 15])
+def test_fused_silu_and_mul_clamp(m, n, dtype, limit):
+    x = torch.randn([m, n], dtype=dtype) * 15
+    output = torch.empty([m, n // 2], dtype=dtype)
+    torch.ops.sgl_kernel.silu_and_mul_clamp_cpu(x, output, float(limit))
     gate, up = x.float().chunk(2, -1)
-    expected = (F.silu(gate.clamp(max=10)) * up.clamp(-10, 10)).bfloat16()
-    torch.testing.assert_close(output, expected, atol=0, rtol=0)
+    expected = (F.silu(gate.clamp(max=limit)) * up.clamp(-limit, limit)).to(dtype)
+    _assert_close(expected, output)
 
 
 @pytest.mark.parametrize("gate_3d", [False, True])
