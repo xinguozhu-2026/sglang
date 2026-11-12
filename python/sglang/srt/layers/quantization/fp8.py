@@ -780,6 +780,17 @@ class Fp8LinearMethod(LinearMethodBase):
         if self.use_npu_block_fp8:
             # G-B consumes checkpoint-layout E4M3 weights and FP32 scales.
             return
+        if _is_cpu and self.weight_block_size == [32, 32]:
+            weight = layer.weight.data
+            scale = layer.weight_scale_inv.float()
+            n, k = weight.shape
+            dequantized = (
+                weight.float().view(n // 32, 32, k // 32, 32) * scale[:, None, :, None]
+            ).reshape(n, k)
+            layer.weight = Parameter(
+                dequantized.to(torch.bfloat16), requires_grad=False
+            )
+            return
         use_deepgemm_runner = (
             getattr(self.w8a8_block_fp8_linear, "func", self.w8a8_block_fp8_linear)
             is deepgemm_w8a8_block_fp8_linear_with_fallback
@@ -1395,6 +1406,8 @@ class Fp8LinearMethod(LinearMethodBase):
         x: torch.Tensor,
         bias: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
+        if _is_cpu and self.block_quant and self.weight_block_size == [32, 32]:
+            return torch.nn.functional.linear(x, layer.weight, bias)
         if self.use_marlin:
             return torch.ops.sglang.apply_fp8_marlin_linear(
                 input=x,
@@ -1900,7 +1913,9 @@ class Fp8MoEMethod(FusedMoEMethodBase):
             fp4_block_k = 32
             if fp4_scale_dtype is None:
                 fp4_scale_dtype = (
-                    torch.float8_e8m0fnu if _use_aiter or is_xpu() else torch.float32
+                    torch.float8_e8m0fnu
+                    if _use_aiter or is_xpu() or _is_cpu
+                    else torch.float32
                 )
             w13_weight_scale = torch.nn.Parameter(
                 torch.ones(
@@ -2151,6 +2166,11 @@ class Fp8MoEMethod(FusedMoEMethodBase):
         logger.warning_once("Dequantized FP4 MoE expert weights to FP8.")
 
     def process_weights_after_loading_block_quant(self, layer: Module) -> None:
+        if _is_cpu and self.is_fp4_expert:
+            # TODO(xinguozhu-2026): Pack MXFP4 expert weights and scales for fused_experts_cpu silu_clamped.
+            layer.w13_weight.data = layer.w13_weight.data.view(torch.uint8)
+            layer.w2_weight.data = layer.w2_weight.data.view(torch.uint8)
+            return
         if _use_aiter and self.is_fp4_expert:
             # aiter MegaMoEv2 builds from the packed FP4 layout, so it has to
             # claim the experts before the native-MXFP4 and dequant arms.
@@ -3358,6 +3378,81 @@ class Fp8MoEMethod(FusedMoEMethodBase):
 
             quant_info = build_ascend_quant_info(layer)
             return self.runner.run(dispatch_output, quant_info)
+
+        if _is_cpu and self.is_fp4_expert:
+            # TODO(xinguozhu-2026): Replace MXFP4 clipped-SiLU PyTorch ref with fused_experts_cpu silu_clamped.
+            from sglang.srt.layers.moe.topk import apply_topk_weights_cpu
+
+            topk_weights, topk_ids, _ = dispatch_output.topk_output
+            x, topk_weights = apply_topk_weights_cpu(
+                moe_runner_config.apply_router_weight_on_input, topk_weights, x
+            )
+            lut = torch.tensor(
+                [
+                    0.0,
+                    0.5,
+                    1.0,
+                    1.5,
+                    2.0,
+                    3.0,
+                    4.0,
+                    6.0,
+                    -0.0,
+                    -0.5,
+                    -1.0,
+                    -1.5,
+                    -2.0,
+                    -3.0,
+                    -4.0,
+                    -6.0,
+                ],
+                dtype=torch.float32,
+                device=x.device,
+            )
+
+            def _dequant_fp4_expert(
+                w_u8: torch.Tensor, s_e8m0: torch.Tensor
+            ) -> torch.Tensor:
+                lo = lut[(w_u8 & 0x0F).long()]
+                hi = lut[(w_u8 >> 4).long()]
+                unpacked = torch.stack([lo, hi], dim=-1).view(w_u8.shape[0], -1, 32)
+                return (
+                    (unpacked * s_e8m0.float().unsqueeze(-1))
+                    .reshape(w_u8.shape[0], -1)
+                    .to(x.dtype)
+                )
+
+            limit = moe_runner_config.swiglu_limit
+            out = torch.zeros_like(x, dtype=torch.float32)
+            for expert_id in topk_ids.unique().tolist():
+                if expert_id < 0 or expert_id >= layer.w13_weight.shape[0]:
+                    continue
+                mask = topk_ids == expert_id
+                token_idx, route_idx = mask.nonzero(as_tuple=True)
+                w13 = _dequant_fp4_expert(
+                    layer.w13_weight[expert_id], layer.w13_weight_scale_inv[expert_id]
+                )
+                w2 = _dequant_fp4_expert(
+                    layer.w2_weight[expert_id], layer.w2_weight_scale_inv[expert_id]
+                )
+                gate, up = (
+                    torch.nn.functional.linear(x[token_idx], w13)
+                    .float()
+                    .chunk(2, dim=-1)
+                )
+                if limit is not None and limit > 0:
+                    act = torch.nn.functional.silu(gate.clamp(max=limit)) * up.clamp(
+                        -limit, limit
+                    )
+                else:
+                    act = torch.nn.functional.silu(gate) * up
+                val = torch.nn.functional.linear(act.to(x.dtype), w2).float()
+                out.index_add_(
+                    0,
+                    token_idx,
+                    val * topk_weights[token_idx, route_idx].float().unsqueeze(-1),
+                )
+            return StandardCombineInput(hidden_states=out.to(x.dtype))
 
         if use_intel_amx_backend(layer):
             from sglang.srt.layers.moe.topk import apply_topk_weights_cpu

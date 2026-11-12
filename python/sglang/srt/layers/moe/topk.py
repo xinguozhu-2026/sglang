@@ -2987,6 +2987,29 @@ def select_experts(
                 apply_routed_scaling_factor_on_output=apply_routed_scaling_factor_on_output,
             )
             padded_rows_masked = route_quant_handoff.take_padded_rows_masked()
+    elif _is_cpu and topk_config.sqrtsoftplus_log1p and custom_routing_function is None:
+        # TODO(xinguozhu-2026): Replace with torch.ops.sgl_kernel.dsv41_sqrtsoftplus_topk_cpu.
+        fold_scale_after_routing = True
+        assert router_logits.ndim == 2 and 0 < top_k_for_gate <= router_logits.shape[1]
+        logits_float = router_logits.float()
+        softplus = torch.where(
+            logits_float > 20.0, logits_float, torch.log1p(torch.exp(logits_float))
+        )
+        scores = softplus.sqrt()
+        choices = scores
+        if correction_bias is not None:
+            assert (
+                correction_bias.ndim == 1
+                and correction_bias.shape[0] == router_logits.shape[1]
+            )
+            choices = scores + correction_bias.float()
+        topk_ids = choices.topk(top_k_for_gate, dim=-1, largest=True, sorted=False)[1]
+        topk_weights = scores.gather(1, topk_ids)
+        if renormalize:
+            topk_weights = topk_weights / (
+                topk_weights.sum(dim=-1, keepdim=True) + 1e-20
+            )
+        topk_ids = topk_ids.to(torch.int32)
     elif torch_native and custom_routing_function is None:
         fold_scale_after_routing = True
         topk_weights, topk_ids = fused_topk_native(
