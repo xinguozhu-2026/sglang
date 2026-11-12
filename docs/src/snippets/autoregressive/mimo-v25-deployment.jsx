@@ -40,6 +40,7 @@ export const MiMoV25Deployment = () => {
         { id: "gb300",    label: "GB300",    default: false },
         { id: "tpu-v7x",  label: "TPU v7x",  default: false, subtitle: "sgl-jax, Pro only" },
         { id: "tpu-v6e",  label: "TPU v6e",  default: false, subtitle: "sgl-jax, Pro only" },
+        { id: "xeon",     label: "XEON",     default: false, subtitle: "Pro, TP4, 1.5 TiB RAM" },
       ],
     },
     eagleMtp: {
@@ -136,6 +137,13 @@ export const MiMoV25Deployment = () => {
     const blackwell = spec ? spec.blackwell : false;
     const jax = spec ? spec.jax : false;
     const c = {};
+    if (hardware === "xeon") {
+      c.modelVariant = { force: "pro", reason: "Only MiMo-V2.5-Pro has completed Xeon validation." };
+      for (const name of ["eagleMtp", "dpAttention", "expertParallelism", "deepep", "reasoningParser", "toolcall"]) {
+        c[name] = { force: "disabled", reason: "The validated Xeon recipe covers basic text generation only." };
+      }
+      return c;
+    }
     // Both checkpoints are TP-interleaved (Pro: 8, base: 4), so attention-TP per
     // DP group must equal that factor. When the spec carries dp>1 (Pro/Hopper
     // tp=16, base tp=8) DP-attention with `--attn-dp-size = tp/factor` is required; without
@@ -224,11 +232,37 @@ export const MiMoV25Deployment = () => {
   }, [values.modelVariant, values.hardware]);
 
   const handleRadioChange = (optionName, value) => {
-    setValues((prev) => ({ ...prev, [optionName]: value }));
+    setValues((prev) => {
+      if (prev.hardware === "xeon" && optionName !== "hardware") return prev;
+      const next = { ...prev, [optionName]: value };
+      if (optionName === "hardware" && value === "xeon") {
+        for (const [key, constraint] of Object.entries(computeConstraints("pro", "xeon"))) {
+          next[key] = constraint.force;
+        }
+      }
+      return next;
+    });
   };
 
   const generateCommand = () => {
     const { modelVariant, hardware, eagleMtp, dpAttention, expertParallelism, deepep, reasoningParser, toolcall } = values;
+    if (hardware === "xeon") {
+      if (modelVariant !== "pro") return "# Error: only MiMo-V2.5-Pro has completed Xeon validation.";
+      // Tested dual-socket GNR: four ranks across all 192 physical CPUs and six NUMA domains.
+      const binding = Array.from({ length: 4 }, (_, rank) =>
+        Array.from({ length: 48 }, (_, index) => rank + 4 * index).join(","),
+      ).join("|");
+      return `SGLANG_USE_CPU_ENGINE=1 SGLANG_CPU_OMP_THREADS_BIND='${binding}' sglang serve \\\n` +
+        "  --model XiaomiMiMo/MiMo-V2.5-Pro \\\n" +
+        "  --device cpu \\\n" +
+        "  --disable-overlap-schedule \\\n" +
+        "  --tp 4 \\\n" +
+        "  --dtype bfloat16 \\\n" +
+        "  --max-total-tokens 8192 \\\n" +
+        "  --max-mamba-cache-size 64 \\\n" +
+        "  --trust-remote-code \\\n" +
+        "  --port 30000";
+    }
     const specKey = `${modelVariant}|${hardware}`;
     const spec = HW_VARIANT_SPEC[specKey];
     const { slug, tp, multinode, nnodes, blackwell, jax } = spec;

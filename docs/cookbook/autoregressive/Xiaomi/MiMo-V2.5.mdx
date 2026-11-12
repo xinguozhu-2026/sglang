@@ -69,6 +69,10 @@ import { MiMoV25Deployment } from '/src/snippets/autoregressive/mimo-v25-deploym
 
 ### 3.2 Configuration Tips
 
+**Intel Xeon CPUs (MiMo-V2.5-Pro only):** The XEON selector provides a basic text-generation recipe validated on a dual-socket Xeon 6972P (GNR) with 192 physical cores, six NUMA domains, and 1.5 TiB RAM. It loads the original FP8 checkpoint with BF16 computation, TP4, and an 8192-token pool. The generated CPU binding is specific to this tested topology: four 48-core ranks interleaved across all six NUMA domains. Other CPU bindings and memory sizes were not validated.
+
+The Xeon recipe does not enable MTP/EAGLE, DP attention, expert parallelism, DeepEP, reasoning parsing, or tool parsing. Native thinking delimiters may remain visible. Basic generation was verified, not the advertised 1M-token context, dataset accuracy, or performance. The separate MiMo-V2.5 multimodal variant is not enabled on Xeon by this recipe.
+
 **MiMo-V2.5-Pro (1.02T):**
 - **B200**: single node, TP=8 (verified). Uses `--attention-backend fa4` + `--moe-runner-backend flashinfer_trtllm` + `--mem-fraction-static 0.8`. Set `--swa-full-tokens-ratio 0.1` to keep KV-cache footprint within 192 GB HBM.
 - **GB300**: 2 nodes, TP=8 (verified). Same Blackwell stack as B200; multi-node interconnect requires `NCCL_MNNVL_ENABLE=1 NCCL_CUMEM_ENABLE=1`. Default SWA ratio is fine.

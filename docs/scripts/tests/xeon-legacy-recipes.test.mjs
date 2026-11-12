@@ -16,11 +16,66 @@ function builder(name, selection) {
   const api = new Function("useState", "useEffect", `${body}
     return { generateCommand, handleRadioChange, options,
       getInitialState: typeof getInitialState === "undefined" ? null : getInitialState,
+      computeConstraints: typeof computeConstraints === "undefined" ? null : computeConstraints,
       handleCheckboxChange: typeof handleCheckboxChange === "undefined" ? null : handleCheckboxChange,
       resolveItems: typeof resolveItems === "undefined" ? null : resolveItems };
   `)(useState, () => {});
   return { ...api, state: () => state };
 }
+
+test("MiMo-V2.5 preserves CUDA/TPU commands and exposes only its validated Pro TP4 CPU topology", () => {
+  const toggles = ["eagleMtp", "dpAttention", "expertParallelism", "deepep", "reasoningParser", "toolcall"];
+  const entries = [];
+  for (const hardware of ["h200", "h100", "b200", "gb300", "tpu-v7x", "tpu-v6e"]) {
+    for (const modelVariant of hardware.startsWith("tpu") ? ["pro"] : ["pro", "base"]) {
+      for (let mask = 0; mask < 64; mask++) {
+        const selection = { hardware, modelVariant };
+        toggles.forEach((key, index) => {
+          selection[key] = mask & (1 << index) ? "enabled" : "disabled";
+        });
+        entries.push([selection, builder("mimo-v25", selection).generateCommand()]);
+      }
+    }
+  }
+  assert.equal(entries.length, 640);
+  assert.equal(createHash("sha256").update(JSON.stringify(entries)).digest("hex"),
+    "6fe001624987c47f80af468eb93f7cd450d40831268b839a8f3b2a82beea729b");
+  const stale = { hardware: "xeon", modelVariant: "pro",
+    ...Object.fromEntries(toggles.map((name) => [name, "enabled"])) };
+  const api = builder("mimo-v25", stale);
+  const command = api.generateCommand();
+  assert.match(command, /^SGLANG_USE_CPU_ENGINE=1 SGLANG_CPU_OMP_THREADS_BIND='[^']+' sglang serve/);
+  assert.match(command, /--model XiaomiMiMo\/MiMo-V2\.5-Pro \\\n  --device cpu \\\n  --disable-overlap-schedule/);
+  assert.match(command, /--tp 4/);
+  assert.match(command, /--dtype bfloat16/);
+  assert.match(command, /--max-total-tokens 8192/);
+  assert.match(command, /--max-mamba-cache-size 64/);
+  assert.match(command, /--trust-remote-code/);
+  assert.match(command, /--port 30000/);
+  assert.doesNotMatch(command, /docker|--model-path|--speculative|--attn-dp|--ep |--reasoning-parser|--tool-call-parser|--moe-a2a|--attention-backend/);
+  const groups = command.match(/SGLANG_CPU_OMP_THREADS_BIND='([^']+)'/)[1]
+    .split("|").map((group) => group.split(",").map(Number));
+  assert.deepEqual(groups, Array.from({ length: 4 }, (_, rank) =>
+    Array.from({ length: 48 }, (_, index) => rank + 4 * index)));
+  assert.equal(new Set(groups.flat()).size, 192);
+  const constraints = api.computeConstraints("pro", "xeon");
+  for (const key of ["modelVariant", ...toggles]) {
+    const items = api.resolveItems(api.options[key], constraints);
+    assert.ok(items.filter((item) => item.id !== constraints[key].force)
+      .every((item) => item.disabled && item.disabledReason));
+  }
+  assert.match(builder("mimo-v25", { ...stale, modelVariant: "base" }).generateCommand(), /^# Error:/);
+  const baseline = { hardware: "xeon", modelVariant: "pro",
+    ...Object.fromEntries(toggles.map((name) => [name, "disabled"])) };
+  const switcher = builder("mimo-v25", { ...stale, hardware: "b200", modelVariant: "base" });
+  switcher.handleRadioChange("hardware", "xeon");
+  assert.deepEqual(switcher.state(), baseline);
+  for (const key of toggles) switcher.handleRadioChange(key, "enabled");
+  switcher.handleRadioChange("modelVariant", "base");
+  assert.deepEqual(switcher.state(), baseline);
+  switcher.handleRadioChange("hardware", "b200");
+  assert.deepEqual(switcher.state(), { ...baseline, hardware: "b200" });
+});
 
 test("Kimi-K2 preserves GPU commands and exposes only its validated TP6 Instruct CPU recipe", () => {
   const entries = [];
