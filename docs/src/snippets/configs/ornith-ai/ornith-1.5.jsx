@@ -285,7 +285,7 @@ export const config = {
       verificationStatus: "unverified",
       env: [],
       flags: [
-        "--model {{MODEL_NAME}}",
+        "--model ornith-ai/Ornith-1.5-122B",
         "--device cpu",
         "--disable-overlap-schedule",
         "--tp 6",

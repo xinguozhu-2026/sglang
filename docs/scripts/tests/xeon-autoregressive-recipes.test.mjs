@@ -94,6 +94,8 @@ for (const [path, digest] of Object.entries(commandDigests)) {
       assert.match(command, /--disable-overlap-schedule/);
       assert.doesNotMatch(command, /docker|--ep|--speculative|--kv-cache-dtype fp8/);
       if (path === "ornith-ai/ornith-1.5.jsx") {
+        const modelName = config.modelNames[`${cell.match.variant}|bf16`];
+        assert.ok(command.includes(`--model ornith-ai/${modelName} `));
         assert.equal(config.playgroundFeatures.parsers.showWhen(selection), false);
         assert.equal(config.playgroundFeatures.parsers.showWhen({ ...selection, hw: "h200" }), true);
         const stale = { ...selection, quant: "fp8", nodes: "multi", runMode: "docker" };
