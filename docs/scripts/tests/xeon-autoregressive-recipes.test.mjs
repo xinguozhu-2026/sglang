@@ -102,6 +102,9 @@ for (const [path, digest] of Object.entries(commandDigests)) {
         });
         const gpu = { ...stale, hw: "h200" };
         assert.deepEqual(config.deriveState(gpu), gpu);
+        if (cell.match.variant === "35b") {
+          assert.match(command, /--model ornith-ai\/Ornith-1.5-35B-A3B /);
+        }
         if (cell.match.variant === "397b") {
           assert.match(command, /SGLANG_USE_CPU_ENGINE=1/);
           assert.match(command, /--model ornith-ai\/Ornith-1.5-397B /);
