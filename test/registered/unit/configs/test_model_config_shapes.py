@@ -1,6 +1,7 @@
 import math
 import unittest
 from types import SimpleNamespace
+from unittest.mock import patch
 
 from sglang.srt.configs.model_config import (
     AttentionArch,
@@ -28,6 +29,42 @@ def _make_text_config(**overrides):
 
 
 class TestModelConfigShapes(CustomTestCase):
+    def test_deepseek_v41_cpu_tp_preserves_heads_per_output_group(self):
+        """TP padding must add whole output groups without expanding shared KV."""
+        from sglang.srt.configs.update_config import (
+            adjust_config_with_unaligned_cpu_tp,
+        )
+
+        for tp_size, groups in ((1, 8), (2, 8), (3, 9), (4, 8), (6, 12)):
+            with self.subTest(tp_size=tp_size):
+                config = _make_text_config(
+                    architectures=["DeepseekV4ForCausalLM"],
+                    model_type="deepseek_v41",
+                    num_attention_heads=64,
+                    num_key_value_heads=1,
+                    o_groups=8,
+                )
+                model_config = SimpleNamespace(
+                    hf_config=config,
+                    hf_text_config=config,
+                    num_attention_heads=64,
+                    get_total_num_kv_heads=lambda: 1,
+                    quantization="fp8",
+                )
+                with patch(
+                    "sglang.srt.configs.update_config.may_get_weight_block_size",
+                    return_value=[32, 32],
+                ):
+                    adjust_config_with_unaligned_cpu_tp(
+                        model_config, load_config=None, tp_size=tp_size
+                    )
+                self.assertEqual(config.o_groups, groups)
+                self.assertEqual(config.num_attention_heads, groups * 8)
+                self.assertEqual(model_config.num_attention_heads, groups * 8)
+                self.assertEqual(config.num_key_value_heads, 1)
+                self.assertEqual(config.original_o_groups, 8)
+                self.assertEqual(config.original_num_attention_heads, 64)
+
     def _derive_shapes(self, text_config):
         model_config = ModelConfig.__new__(ModelConfig)
         model_config.hf_config = text_config
