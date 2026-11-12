@@ -15,11 +15,69 @@ function builder(name, selection) {
     : [false, () => {}];
   const api = new Function("useState", "useEffect", `${body}
     return { generateCommand, handleRadioChange, options,
+      getInitialState: typeof getInitialState === "undefined" ? null : getInitialState,
       handleCheckboxChange: typeof handleCheckboxChange === "undefined" ? null : handleCheckboxChange,
       resolveItems: typeof resolveItems === "undefined" ? null : resolveItems };
   `)(useState, () => {});
   return { ...api, state: () => state };
 }
+
+test("Kimi-K2 preserves GPU commands and exposes only its validated TP6 Instruct CPU recipe", () => {
+  const entries = [];
+  for (const hardware of ["h200", "b200", "b300", "mi300x", "mi325x", "mi355x"]) {
+    for (const modelname of ["instruct", "thinking"]) {
+      for (let mask = 0; mask < 8; mask++) {
+        for (const reasoning of ["disabled", "enabled"]) {
+          for (const toolcall of ["disabled", "enabled"]) {
+            const selection = {
+              hardware, modelname, strategy: ["tp", "dp", "ep"].filter((_, i) => mask & (1 << i)),
+              reasoning, toolcall,
+            };
+            entries.push([selection, builder("kimi-k2", selection).generateCommand(selection)]);
+          }
+        }
+      }
+    }
+  }
+  assert.equal(entries.length, 384);
+  assert.equal(createHash("sha256").update(JSON.stringify(entries)).digest("hex"),
+    "d4bca90229294cdd99b468493b29475277747672e844cac9f4571f1e4a00592a");
+  const baseline = {
+    hardware: "xeon", modelname: "instruct", strategy: ["tp"],
+    reasoning: "disabled", toolcall: "disabled",
+  };
+  const api = builder("kimi-k2", baseline);
+  assert.deepEqual(api.getInitialState(), { ...baseline, hardware: "h200" });
+  const stale = { ...baseline, strategy: ["tp", "dp", "ep"], reasoning: "enabled", toolcall: "enabled" };
+  const command = api.generateCommand(stale);
+  assert.match(command, /^SGLANG_USE_CPU_ENGINE=1 python3 -m sglang.launch_server/);
+  assert.match(command, /--model moonshotai\/Kimi-K2-Instruct(?:\s|$)/);
+  assert.match(command, /--device cpu \\\n  --disable-overlap-schedule/);
+  assert.match(command, /--tp 6/);
+  assert.match(command, /--dtype bfloat16/);
+  assert.match(command, /--max-total-tokens 8192/);
+  assert.match(command, /--max-mamba-cache-size 64/);
+  assert.match(command, /--trust-remote-code/);
+  assert.doesNotMatch(command, /docker|--model-path|--attn-dp|--ep|--reasoning-parser|--tool-call-parser|--speculative|--kv-cache-dtype/);
+  assert.match(api.generateCommand({ ...baseline, modelname: "thinking" }), /^# Error:/);
+  assert.equal(api.options.modelname.getDynamicItems(baseline)
+    .find((item) => item.id === "thinking").disabled, true);
+  for (const key of ["strategy", "reasoning", "toolcall"]) {
+    assert.equal(api.options[key].condition(baseline), false);
+  }
+  const switcher = builder("kimi-k2", { ...stale, hardware: "h200", modelname: "thinking" });
+  switcher.handleRadioChange("hardware", "xeon");
+  assert.deepEqual(switcher.state(), baseline);
+  switcher.handleRadioChange("modelname", "thinking");
+  switcher.handleRadioChange("reasoning", "enabled");
+  switcher.handleRadioChange("toolcall", "enabled");
+  switcher.handleCheckboxChange("strategy", "dp", true);
+  assert.deepEqual(switcher.state(), baseline);
+  switcher.handleRadioChange("hardware", "b200");
+  assert.deepEqual(switcher.state(), { ...baseline, hardware: "b200" });
+  assert.equal(api.options.modelname.getDynamicItems({ ...baseline, hardware: "b200" })
+    .find((item) => item.id === "thinking").disabled, undefined);
+});
 
 test("MiMo-V2-Flash preserves all GPU commands and exposes only validated TP4 CPU baseline", () => {
   const entries = [];

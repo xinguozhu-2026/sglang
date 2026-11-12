@@ -11,7 +11,8 @@ export const KimiK2Deployment = () => {
         { id: 'b300', label: 'B300', default: false },
         { id: 'mi300x', label: 'MI300X', default: false },
         { id: 'mi325x', label: 'MI325X', default: false },
-        { id: 'mi355x', label: 'MI355X', default: false }
+        { id: 'mi355x', label: 'MI355X', default: false },
+        { id: 'xeon', label: 'XEON', default: false }
       ]
     },
     modelname: {
@@ -20,11 +21,17 @@ export const KimiK2Deployment = () => {
       items: [
         { id: 'instruct', label: 'Kimi-K2-Instruct', default: true },
         { id: 'thinking', label: 'Kimi-K2-Thinking', default: false }
-      ]
+      ],
+      getDynamicItems: (v) => options.modelname.items.map((item) =>
+        v.hardware === 'xeon' && item.id !== 'instruct'
+          ? { ...item, disabled: true, disabledReason: 'Only Kimi-K2-Instruct basic generation is supported on Intel Xeon CPUs.' }
+          : item
+      )
     },
     strategy: {
       name: 'strategy',
       title: 'Deployment Strategy',
+      condition: (v) => v.hardware !== 'xeon',
       type: 'checkbox',
       items: [
         { id: 'tp', label: 'TP', default: true, required: true },
@@ -35,6 +42,7 @@ export const KimiK2Deployment = () => {
     reasoning: {
       name: 'reasoning',
       title: 'Reasoning Parser',
+      condition: (v) => v.hardware !== 'xeon',
       items: [
         { id: 'disabled', label: 'Disabled', default: true },
         { id: 'enabled', label: 'Enabled', default: false }
@@ -43,6 +51,7 @@ export const KimiK2Deployment = () => {
     toolcall: {
       name: 'toolcall',
       title: 'Tool Call Parser',
+      condition: (v) => v.hardware !== 'xeon',
       items: [
         { id: 'disabled', label: 'Disabled', default: true },
         { id: 'enabled', label: 'Enabled', default: false }
@@ -52,6 +61,21 @@ export const KimiK2Deployment = () => {
 
   const generateCommand = (values) => {
     const { hardware, modelname, strategy, reasoning, toolcall } = values;
+
+    if (hardware === 'xeon') {
+      if (modelname !== 'instruct') {
+        return '# Error: The Intel Xeon CPU recipe supports only Kimi-K2-Instruct.';
+      }
+      return 'SGLANG_USE_CPU_ENGINE=1 python3 -m sglang.launch_server \\\n' +
+        '  --model moonshotai/Kimi-K2-Instruct \\\n' +
+        '  --device cpu \\\n' +
+        '  --disable-overlap-schedule \\\n' +
+        '  --tp 6 \\\n' +
+        '  --dtype bfloat16 \\\n' +
+        '  --max-total-tokens 8192 \\\n' +
+        '  --max-mamba-cache-size 64 \\\n' +
+        '  --trust-remote-code';
+    }
 
     if (modelname === 'instruct' && reasoning === 'enabled') {
       return `# Error: Kimi-K2-Instruct doesn't support reasoning parser\n# Please select "Disabled" for Reasoning Parser or choose Kimi-K2-Thinking model`;
@@ -161,11 +185,22 @@ export const KimiK2Deployment = () => {
   }, []);
 
   const handleRadioChange = (optionName, value) => {
-    setValues((prev) => ({ ...prev, [optionName]: value }));
+    setValues((prev) => {
+      if (prev.hardware === 'xeon' && optionName !== 'hardware') return prev;
+      const next = { ...prev, [optionName]: value };
+      if (next.hardware === 'xeon') {
+        next.modelname = 'instruct';
+        next.strategy = ['tp'];
+        next.reasoning = 'disabled';
+        next.toolcall = 'disabled';
+      }
+      return next;
+    });
   };
 
   const handleCheckboxChange = (optionName, itemId, isChecked) => {
     setValues((prev) => {
+      if (prev.hardware === 'xeon') return prev;
       const currentValues = prev[optionName] || [];
       if (isChecked) {
         return { ...prev, [optionName]: [...currentValues, itemId] };
