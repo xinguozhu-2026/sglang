@@ -213,6 +213,12 @@ def create_dsv4_backend(runner):
         raise ValueError(
             f"DeepSeek-V4 cutedsl_h16 prefill requires CUDA SM90, not {platform}."
         )
+    if runner.device == "cpu":
+        from sglang.srt.layers.attention.deepseek_v4_cpu_backend import (
+            DeepseekV4CPUBackend,
+        )
+
+        return DeepseekV4CPUBackend(runner)
     if _is_npu:
         from sglang.srt.hardware_backend.npu.attention.ascend_dsv4_backend import (
             DeepseekV4AscendAttnBackend,

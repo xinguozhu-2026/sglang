@@ -64,10 +64,38 @@ from sglang.srt.runtime_context import (
     max_speculative_num_draft_tokens,
 )
 from sglang.srt.utils.common import ceil_align, ceil_div
-from sglang.srt.utils.device import is_float4_e2m1fn_x2, is_hip, is_npu
+from sglang.srt.utils.device import is_float4_e2m1fn_x2, is_hip, is_npu, is_cpu
 
 _is_hip = is_hip()
 _is_npu = is_npu()
+_is_cpu = is_cpu()
+
+
+def spec_decode_alloc_len_per_request(
+    *,
+    page_size,
+    speculative_num_steps,
+    speculative_eagle_topk,
+    speculative_num_draft_tokens,
+) -> int:
+    """Per-request KV tokens a (spec-v1) decode step allocates: the draft-decode
+    topk*num_steps peak vs. the verify num_draft_tokens, page-aligned. A pure
+    function of the resolved values its one caller reads off the bags.
+    """
+    len_per_topk = speculative_num_steps or 1
+    spec_topk = speculative_eagle_topk or 1
+    spec_tokens = speculative_num_draft_tokens or 1
+
+    if page_size > 1 and spec_topk > 1:
+        # last partial page and ceil alignment
+        len_per_topk = ceil_align(len_per_topk + page_size, page_size)
+        spec_tokens = ceil_align(spec_tokens, page_size)
+    elif page_size > 1:
+        # only page alignment
+        len_per_topk = ceil_align(len_per_topk, page_size)
+        spec_tokens = ceil_align(spec_tokens, page_size)
+
+    return max(len_per_topk * spec_topk, spec_tokens)
 
 
 def spec_decode_alloc_len_per_request(
@@ -1238,7 +1266,9 @@ class DSV4PoolConfigurator(MemoryPoolConfigurator):
         self._unified_row_bytes = dsv4_unified_row_bytes(
             self.qk_nope_head_dim, self.qk_rope_head_dim, self._unified_fp8
         )
-        if self._unified:
+        if _is_cpu:
+            self.kv_bytes = self.attn_head_dim * 2
+        elif self._unified:
             # Unified_kv stores the whole latent: one bf16 row, or fp8 nope + bf16 rope.
             self.kv_bytes = self._unified_row_bytes
         elif get_exec().kernel.dsv4_attn_backend == "trtllm":
@@ -1310,6 +1340,8 @@ class DSV4PoolConfigurator(MemoryPoolConfigurator):
         self.low_ratio_index_bytes = get_dsv4_indexer_bytes_per_token(
             self.indexer_head_dim, use_fp4_indexer=True
         )
+        if _is_cpu:
+            self.low_ratio_index_bytes = self.indexer_head_dim * 2
 
         # kvc.sliding_window_size is None on a runner without SWA layers.
         self._swa_ring_size = get_swa_ring_size(cfg.window_size, self.is_speculative)
@@ -1530,6 +1562,8 @@ class DSV4PoolConfigurator(MemoryPoolConfigurator):
         return ceil_align(cap + headroom, self.page_size)
 
     def _get_paged_kv_bytes_per_token(self, compress_ratio: int = 0) -> float:
+        if _is_cpu:
+            return self.kv_bytes
         # Unified rings, the NPU pool and the trtllm uniform-FP8 pool do not go
         # through DeepSeekV4SingleKVPool.create_buffer, so they carry no page pad.
         if self._unified or _is_npu or get_exec().kernel.dsv4_attn_backend == "trtllm":
