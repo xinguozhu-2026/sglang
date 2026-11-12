@@ -64,7 +64,7 @@ from sglang.srt.runtime_context import (
     max_speculative_num_draft_tokens,
 )
 from sglang.srt.utils.common import ceil_align, ceil_div
-from sglang.srt.utils.device import is_float4_e2m1fn_x2, is_hip, is_npu, is_cpu
+from sglang.srt.utils.device import is_cpu, is_float4_e2m1fn_x2, is_hip, is_npu
 
 _is_hip = is_hip()
 _is_npu = is_npu()

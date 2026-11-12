@@ -588,15 +588,12 @@ def post(
 ) -> torch.Tensor:
     """``R'[i] = post[i] * x + sum_j comb[j][i] * R[j]``, by whichever kernel fits."""
     if x.device.type == "cpu":
-        # TODO(xinguozhu-2026): Replace with torch.ops.sgl_kernel.dsv4_hc_post_cpu.
-        assert x.ndim == 2 and residual.ndim == 3
-        assert residual.shape == (x.shape[0], cfg.mult, x.shape[1])
-        assert post_mix.shape == (x.shape[0], cfg.mult)
-        assert comb.shape == (x.shape[0], cfg.mult, cfg.mult)
-        return (
-            torch.bmm(comb.transpose(1, 2), residual.float())
-            + post_mix.unsqueeze(-1) * x.float().unsqueeze(1)
-        ).to(x.dtype)
+        return torch.ops.sgl_kernel.dsv4_hc_post_cpu(
+            x.contiguous(),
+            residual.contiguous(),
+            post_mix.contiguous(),
+            comb.contiguous(),
+        )
     if x.shape[0] == 0:
         return torch.empty((0, cfg.mult, x.shape[-1]), dtype=x.dtype, device=x.device)
 

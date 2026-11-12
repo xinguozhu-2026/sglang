@@ -139,44 +139,6 @@ def _jit_main_q_indexer_rope_hadamard_fp4_quant_module(dtype: torch.dtype):
     )
 
 
-def _norm_rope_cpu_ref(
-    x: torch.Tensor,
-    weight: Optional[torch.Tensor],
-    freqs_cis: torch.Tensor,
-    positions: torch.Tensor,
-    eps: Optional[float],
-    inverse: bool,
-) -> None:
-    # TODO(xinguozhu-2026): Replace with torch.ops.sgl_kernel.dsv4_norm_rope_cpu.
-    assert x.device.type == "cpu" and x.ndim in (2, 3) and x.stride(-1) == 1
-    assert freqs_cis.ndim == 2 and freqs_cis.dtype == torch.complex64
-    assert positions.ndim == 1 and positions.shape[0] == x.shape[0]
-    pos = positions.long()
-    assert bool((pos >= 0).all() and (pos < freqs_cis.shape[0]).all()), (
-        "RoPE position out of range"
-    )
-    vals = x.float()
-    if eps is not None:
-        rstd = torch.rsqrt(vals.square().mean(dim=-1, keepdim=True) + float(eps))
-        vals = vals * rstd
-        if weight is not None:
-            assert weight.numel() == x.shape[-1]
-            vals = vals * weight.float()
-    rope_dim = 2 * freqs_cis.shape[1]
-    assert x.shape[-1] >= rope_dim
-    tail = torch.view_as_complex(
-        vals[..., -rope_dim:].unflatten(-1, (-1, 2)).contiguous()
-    )
-    f = freqs_cis[pos]
-    if inverse:
-        f = f.conj()
-    if x.ndim == 3:
-        f = f.unsqueeze(1)
-    rotated = torch.view_as_real(tail * f).flatten(-2)
-    vals = torch.cat([vals[..., :-rope_dim], rotated], dim=-1)
-    x.copy_(vals.to(x.dtype))
-
-
 def fused_rope_inplace(
     q: torch.Tensor,
     k: Optional[torch.Tensor],
@@ -194,9 +156,13 @@ def fused_rope_inplace(
         inverse: if True, apply inverse rotation (conjugate freqs)
     """
     if q.device.type == "cpu":
-        _norm_rope_cpu_ref(q, None, freqs_cis, positions, None, inverse)
+        torch.ops.sgl_kernel.dsv4_norm_rope_cpu(
+            q, None, freqs_cis, positions, None, inverse
+        )
         if k is not None:
-            _norm_rope_cpu_ref(k, None, freqs_cis, positions, None, inverse)
+            torch.ops.sgl_kernel.dsv4_norm_rope_cpu(
+                k, None, freqs_cis, positions, None, inverse
+            )
         return
     if _is_hip or _is_xpu:
         from sglang.kernels.ops.attention.dsv4.rope import (
@@ -221,7 +187,9 @@ def fused_norm_rope_inplace(
     positions: torch.Tensor,
 ) -> None:
     if kv.device.type == "cpu":
-        _norm_rope_cpu_ref(kv, weight, freq_cis, positions, eps, False)
+        torch.ops.sgl_kernel.dsv4_norm_rope_cpu(
+            kv, weight, freq_cis, positions, eps, False
+        )
         return
     freq_cis = torch.view_as_real(freq_cis).flatten(-2)
     module = _jit_fused_norm_rope_module(kv.dtype, kv.shape[-1], freq_cis.shape[-1])
@@ -245,7 +213,9 @@ def fused_q_norm_rope(
 ) -> None:
     if q_input.device.type == "cpu":
         q_output.copy_(q_input)
-        _norm_rope_cpu_ref(q_output, None, freqs_cis, positions, eps, False)
+        torch.ops.sgl_kernel.dsv4_norm_rope_cpu(
+            q_output, None, freqs_cis, positions, eps, False
+        )
         return
     # Reuse the BF16 kernel and preserve its rounding before FP8 conversion.
     # Keep the temporary separate from q_input: callers may reuse the input.

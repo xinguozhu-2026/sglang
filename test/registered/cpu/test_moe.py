@@ -140,6 +140,81 @@ def make_mxfp4_weights(e, out_dim, in_dim, dtype, with_bias=False):
 
 
 class TestFusedExperts:
+    def test_dsv41_fp8_dense_uses_two_dimensional_block_scales(self):
+        """Adjacent output and input blocks must not share a scale."""
+        from sglang.srt.layers.quantization.fp8 import Fp8LinearMethod
+
+        layer = torch.nn.Module()
+        weight = torch.arange(64 * 64).reshape(64, 64).remainder(16).float()
+        layer.weight = torch.nn.Parameter(
+            weight.to(torch.float8_e4m3fn), requires_grad=False
+        )
+        layer.weight_scale_inv = torch.nn.Parameter(
+            torch.tensor([[0.5, 1.0], [2.0, 4.0]]).to(torch.float8_e8m0fnu),
+            requires_grad=False,
+        )
+        method = Fp8LinearMethod.__new__(Fp8LinearMethod)
+        method.weight_block_size = [32, 32]
+        method.block_quant = True
+        method.process_weights_after_loading_block_quant(layer)
+        scales = torch.tensor([[0.5, 1.0], [2.0, 4.0]])
+        expected = (
+            weight * scales.repeat_interleave(32, 0).repeat_interleave(32, 1)
+        ).bfloat16()
+        torch.testing.assert_close(layer.weight, expected, atol=0, rtol=0)
+        x = torch.randn(3, 64, dtype=dtype)
+        torch.testing.assert_close(
+            method.apply(layer, x), torch.nn.functional.linear(x, expected)
+        )
+
+    @pytest.mark.parametrize("renormalize", [False, True])
+    def test_dsv41_router_bias_selects_but_does_not_change_weights(self, renormalize):
+        """Correction bias changes the chosen experts, not their probabilities."""
+        logits = torch.tensor([[-100.0, -2.0, 0.0, 2.0, 100.0]])
+        bias = torch.tensor([0.0, 20.0, 0.0, 20.0, -20.0])
+        weights, ids = kernel.dsv41_sqrtsoftplus_topk_cpu(logits, bias, 2, renormalize)
+        assert set(ids[0].tolist()) == {1, 3}
+        expected = torch.nn.functional.softplus(logits).sqrt().gather(1, ids.long())
+        if renormalize:
+            expected /= expected.sum(-1, keepdim=True)
+        torch.testing.assert_close(weights, expected)
+
+    @pytest.mark.parametrize("m", [1, 17])
+    def test_mxfp4_deepseek_clipped_silu(self, m):
+        """DeepSeek clamps contiguous gate/up branches without GPT-OSS's up bias."""
+        n, k, e, topk = 64, 64, 4, 2
+        x = torch.randn(m, k, dtype=dtype) / 2
+        w1, packed_w1, scales1 = make_mxfp4_weights(e, 2 * n, k, dtype)
+        w2, packed_w2, scales2 = make_mxfp4_weights(e, k, n, dtype)
+        weights, ids = make_routing(m, e, topk, dtype, renormalize=True)
+        clip = 0.15
+        expected = torch.zeros(m, k, dtype=torch.float32)
+        for token in range(m):
+            for route in range(topk):
+                expert = ids[token, route]
+                gate, up = (
+                    torch.nn.functional.linear(x[token], w1[expert]).float().chunk(2)
+                )
+                activation = (
+                    torch.nn.functional.silu(gate.clamp(max=clip))
+                    * up.clamp(-clip, clip)
+                ).to(dtype)
+                value = torch.nn.functional.linear(activation, w2[expert])
+                expected[token] += value.float() * weights[token, route]
+        actual = run_fused_experts(
+            x,
+            packed_w1,
+            packed_w2,
+            weights,
+            ids,
+            quant=CPUQuantMethod.MXFP4,
+            w1_scale=scales1,
+            w2_scale=scales2,
+            limit=clip,
+            activation="silu_clamped",
+        )
+        torch.testing.assert_close(actual.float(), expected, atol=3e-4, rtol=0.03)
+
     def test_unsupported_activation_is_rejected(self):
         m, n, k, e, topk = 2, 32, 32, 4, 2
         a = torch.randn((m, k), dtype=dtype) / 10

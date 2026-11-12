@@ -434,31 +434,9 @@ def hc_split_sinkhorn(
     eps: float = 1e-6,
 ):
     if mixes.device.type == "cpu":
-        # TODO(xinguozhu-2026): Replace with torch.ops.sgl_kernel.dsv4_hc_split_sinkhorn_cpu.
-        assert (
-            mixes.dtype == torch.float32
-            and hc_scale.dtype == torch.float32
-            and hc_base.dtype == torch.float32
+        return torch.ops.sgl_kernel.dsv4_hc_split_sinkhorn_cpu(
+            mixes.contiguous(), hc_scale, hc_base, hc_mult, sinkhorn_iters, eps
         )
-        assert hc_mult > 0 and sinkhorn_iters > 0 and eps > 0
-        assert mixes.ndim == 3 and mixes.shape[2] == (hc_mult + 2) * hc_mult
-        assert hc_scale.numel() == 3 and hc_base.numel() == (hc_mult + 2) * hc_mult
-        pre_raw = mixes[..., :hc_mult] * hc_scale[0] + hc_base[:hc_mult]
-        post_raw = (
-            mixes[..., hc_mult : 2 * hc_mult] * hc_scale[1]
-            + hc_base[hc_mult : 2 * hc_mult]
-        )
-        comb_raw = (
-            mixes[..., 2 * hc_mult :] * hc_scale[2] + hc_base[2 * hc_mult :]
-        ).view(mixes.shape[0], mixes.shape[1], hc_mult, hc_mult)
-        pre = torch.sigmoid(pre_raw) + eps
-        post = 2.0 * torch.sigmoid(post_raw)
-        comb = torch.softmax(comb_raw, dim=-1) + eps
-        comb = comb / (comb.sum(dim=-2, keepdim=True) + eps)
-        for _ in range(sinkhorn_iters - 1):
-            comb = comb / (comb.sum(dim=-1, keepdim=True) + eps)
-            comb = comb / (comb.sum(dim=-2, keepdim=True) + eps)
-        return pre, post, comb
     b, s, _ = mixes.size()
     if b * s == 0:
         # DP attention's idle forward carries no tokens, and every backend below
@@ -2832,11 +2810,9 @@ def mhc_combine(
 ) -> torch.Tensor:
     """Fused y[m, h] = sum_k pre[m, k] * x_flat[m, k*H + h]."""
     if x_flat.device.type == "cpu":
-        # TODO(xinguozhu-2026): Replace with torch.ops.sgl_kernel.dsv4_hc_combine_cpu.
-        assert x_flat.ndim == 2 and hc > 0 and x_flat.shape[1] % hc == 0
-        assert pre.shape == (x_flat.shape[0], hc) and pre.dtype == torch.float32
-        x_3d = x_flat.view(x_flat.shape[0], hc, -1).float()
-        return (x_3d * pre.unsqueeze(-1)).sum(dim=1).to(out_dtype)
+        return torch.ops.sgl_kernel.dsv4_hc_combine_cpu(
+            x_flat.contiguous(), pre.contiguous(), hc
+        ).to(out_dtype)
     assert x_flat.stride(1) == 1
     m = x_flat.shape[0]
     h = x_flat.shape[1] // hc
