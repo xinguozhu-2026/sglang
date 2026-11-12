@@ -77,7 +77,7 @@ for (const [path, digest] of Object.entries(commandDigests)) {
       assert.deepEqual(cells.map((cell) => cell.match.variant).sort(), ["0.9b", "3.7b", "32b", "7b"]);
     }
     if (path === "ornith-ai/ornith-1.5.jsx") {
-      assert.deepEqual(cells.map((cell) => cell.match.variant).sort(), ["122b", "35b", "9b"]);
+      assert.deepEqual(cells.map((cell) => cell.match.variant).sort(), ["122b", "35b", "397b", "9b"]);
       assert.ok(cells.every((cell) => cell.match.quant === "bf16"));
     }
     if (path === "deepreinforce-ai/ornith-1.0.jsx") {
@@ -93,6 +93,26 @@ for (const [path, digest] of Object.entries(commandDigests)) {
       assert.match(command, /--device cpu/);
       assert.match(command, /--disable-overlap-schedule/);
       assert.doesNotMatch(command, /docker|--ep|--speculative|--kv-cache-dtype fp8/);
+      if (path === "ornith-ai/ornith-1.5.jsx") {
+        assert.equal(config.playgroundFeatures.parsers.showWhen(selection), false);
+        assert.equal(config.playgroundFeatures.parsers.showWhen({ ...selection, hw: "h200" }), true);
+        const stale = { ...selection, quant: "fp8", nodes: "multi", runMode: "docker" };
+        assert.deepEqual(config.deriveState(stale), {
+          ...stale, quant: "bf16", strategy: "balanced", nodes: "single", runMode: "python",
+        });
+        const gpu = { ...stale, hw: "h200" };
+        assert.deepEqual(config.deriveState(gpu), gpu);
+        if (cell.match.variant === "397b") {
+          assert.match(command, /SGLANG_USE_CPU_ENGINE=1/);
+          assert.match(command, /--model ornith-ai\/Ornith-1.5-397B /);
+          assert.match(command, /--tp 6/);
+          assert.match(command, /--dtype bfloat16/);
+          assert.match(command, /--max-total-tokens 8192/);
+          assert.match(command, /--max-mamba-cache-size 64/);
+          assert.match(command, /--port 30000/);
+          assert.doesNotMatch(command, /--reasoning-parser|--tool-call-parser/);
+        }
+      }
       if (path === "deepreinforce-ai/ornith-1.0.jsx") {
         assert.equal(config.playgroundFeatures.parsers.showWhen(selection), false);
         assert.equal(config.playgroundFeatures.parsers.showWhen({ ...selection, hw: "h200" }), true);

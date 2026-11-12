@@ -9,8 +9,12 @@ export const config = {
   ],
   runModes: (s) => s.hw === "xeon" ? ["python"] : ["python", "docker"],
   playgroundFeatures: {
+    parsers: { showWhen: (s) => s.hw !== "xeon" },
     normalizeDeltas: (deltas, derived, base) => base.hw === "xeon" ? {} : deltas,
   },
+  deriveState: (s) => s.hw === "xeon" ? {
+    ...s, quant: "bf16", strategy: "balanced", nodes: "single", runMode: "python",
+  } : s,
 
   showPlaygroundLink: false,
 
@@ -288,6 +292,24 @@ export const config = {
         "--dtype bfloat16",
         "--trust-remote-code",
         "--max-total-tokens 8192",
+        "--host {{HOST_IP}}",
+        "--port {{PORT}}",
+      ],
+    },
+    {
+      match: { hw: "xeon", variant: "397b", quant: "bf16", strategy: "balanced", nodes: "single" },
+      verified: false,
+      verificationStatus: "unverified",
+      env: ["SGLANG_USE_CPU_ENGINE=1"],
+      flags: [
+        "--model ornith-ai/Ornith-1.5-397B",
+        "--device cpu",
+        "--disable-overlap-schedule",
+        "--tp 6",
+        "--dtype bfloat16",
+        "--trust-remote-code",
+        "--max-total-tokens 8192",
+        "--max-mamba-cache-size 64",
         "--host {{HOST_IP}}",
         "--port {{PORT}}",
       ],
