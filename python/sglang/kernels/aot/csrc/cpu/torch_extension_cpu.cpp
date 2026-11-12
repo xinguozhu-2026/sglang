@@ -20,6 +20,31 @@ limitations under the License.
 #include "sgl_kernel_ops.h"
 #include "shm.h"
 
+namespace dsv4_cpu {
+at::Tensor sparse_attention_cpu(
+    const at::Tensor&,
+    const at::Tensor&,
+    const at::Tensor&,
+    const at::Tensor&,
+    const at::Tensor&,
+    const at::Tensor&,
+    double);
+std::tuple<at::Tensor, at::Tensor>
+sqrtsoftplus_topk_cpu(const at::Tensor&, const std::optional<at::Tensor>&, int64_t, bool);
+void silu_and_mul_clamp_cpu(const at::Tensor&, at::Tensor, double);
+std::tuple<at::Tensor, at::Tensor, at::Tensor>
+hc_split_sinkhorn_cpu(const at::Tensor&, const at::Tensor&, const at::Tensor&, int64_t, int64_t, double);
+at::Tensor hc_combine_cpu(const at::Tensor&, const at::Tensor&, int64_t);
+at::Tensor hc_post_cpu(const at::Tensor&, const at::Tensor&, const at::Tensor&, const at::Tensor&);
+void norm_rope_cpu(
+    at::Tensor,
+    const std::optional<at::Tensor>&,
+    const at::Tensor&,
+    const at::Tensor&,
+    const std::optional<double>&,
+    bool);
+}  // namespace dsv4_cpu
+
 // silu_and_mul
 at::Tensor silu_and_mul_cpu(at::Tensor& input);
 
@@ -643,6 +668,26 @@ void copy_all_layer_kv_cache_cpu(
 // Taking fused_add_rmsnorm_cpu as an example, add `Tensor(a!)` modifier to all tensors that
 // will be modified in-place to avoid incorrect fusing and execution order on graph mode.
 TORCH_LIBRARY_FRAGMENT(sgl_kernel, m) {
+  m.def(
+      "dsv41_sparse_attention_cpu(Tensor query, Tensor swa, Tensor extra, Tensor swa_slots, Tensor extra_slots, "
+      "Tensor sink, float scale) -> Tensor");
+  m.impl("dsv41_sparse_attention_cpu", torch::kCPU, &dsv4_cpu::sparse_attention_cpu);
+  m.def("dsv41_sqrtsoftplus_topk_cpu(Tensor logits, Tensor? bias, int topk, bool renormalize) -> (Tensor, Tensor)");
+  m.impl("dsv41_sqrtsoftplus_topk_cpu", torch::kCPU, &dsv4_cpu::sqrtsoftplus_topk_cpu);
+  m.def("silu_and_mul_clamp_cpu(Tensor input, Tensor(a!) output, float limit) -> ()");
+  m.impl("silu_and_mul_clamp_cpu", torch::kCPU, &dsv4_cpu::silu_and_mul_clamp_cpu);
+  m.def(
+      "dsv4_hc_split_sinkhorn_cpu(Tensor mixes, Tensor scale, Tensor base, int hc, int iters, float eps) -> (Tensor, "
+      "Tensor, Tensor)");
+  m.impl("dsv4_hc_split_sinkhorn_cpu", torch::kCPU, &dsv4_cpu::hc_split_sinkhorn_cpu);
+  m.def("dsv4_hc_combine_cpu(Tensor input, Tensor pre, int hc) -> Tensor");
+  m.impl("dsv4_hc_combine_cpu", torch::kCPU, &dsv4_cpu::hc_combine_cpu);
+  m.def("dsv4_hc_post_cpu(Tensor input, Tensor residual, Tensor post, Tensor comb) -> Tensor");
+  m.impl("dsv4_hc_post_cpu", torch::kCPU, &dsv4_cpu::hc_post_cpu);
+  m.def(
+      "dsv4_norm_rope_cpu(Tensor(a!) input, Tensor? weight, Tensor freqs, Tensor positions, float? eps, bool inverse) "
+      "-> ()");
+  m.impl("dsv4_norm_rope_cpu", torch::kCPU, &dsv4_cpu::norm_rope_cpu);
   // activation
   m.def("silu_and_mul_cpu(Tensor input) -> Tensor");
   m.impl("silu_and_mul_cpu", torch::kCPU, &silu_and_mul_cpu);
