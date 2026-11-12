@@ -3,19 +3,23 @@
 
 namespace {
 
-template <typename scalar_t, typename func_t, typename vec_func_t>
+template <bool kApplySwigluLimit = false, typename scalar_t, typename func_t, typename vec_func_t>
 void act_and_mul_kernel_impl(
     scalar_t* __restrict__ output,
     const scalar_t* __restrict__ input,
     int64_t num_tokens,
     int64_t dim,
     const func_t& f,
-    const vec_func_t& vf) {
+    const vec_func_t& vf,
+    float limit = 0.0f) {
   using bVec = at::vec::Vectorized<scalar_t>;
   using fVec = at::vec::Vectorized<float>;
 
   constexpr int64_t kVecSize = bVec::size();
   at::parallel_for(0, num_tokens, 0, [&](int64_t begin, int64_t end) {
+    const fVec limit_v(limit);
+    const fVec nlimit_v(-limit);
+
     for (int64_t i = begin; i < end; ++i) {
       // local ptrs
       const scalar_t* __restrict__ input_ptr = input + i * 2 * dim;
@@ -27,6 +31,13 @@ void act_and_mul_kernel_impl(
       for (d = 0; d <= dim - kVecSize; d += kVecSize) {
         auto [x_fvec0, x_fvec1] = load_float_vec2(input_ptr + d);
         auto [y_fvec0, y_fvec1] = load_float_vec2(input_other_ptr + d);
+
+        if constexpr (kApplySwigluLimit) {
+          x_fvec0 = at::vec::minimum(x_fvec0, limit_v);
+          x_fvec1 = at::vec::minimum(x_fvec1, limit_v);
+          y_fvec0 = at::vec::clamp(y_fvec0, nlimit_v, limit_v);
+          y_fvec1 = at::vec::clamp(y_fvec1, nlimit_v, limit_v);
+        }
 
         x_fvec0 = vf(x_fvec0);
         x_fvec1 = vf(x_fvec1);
@@ -40,6 +51,10 @@ void act_and_mul_kernel_impl(
       for (; d < dim; ++d) {
         float x_val = static_cast<float>(input_ptr[d]);
         float y_val = static_cast<float>(input_other_ptr[d]);
+        if constexpr (kApplySwigluLimit) {
+          x_val = std::min(x_val, limit);
+          y_val = std::clamp(y_val, -limit, limit);
+        }
         output_ptr[d] = f(x_val) * y_val;
       }
     }
@@ -117,6 +132,32 @@ at::Tensor silu_and_mul_cpu(at::Tensor& input) {
         [](Vec x) { return fast_silu(x); });
   });
   return out;
+}
+
+// silu(min(x_gate, L)) * clamp(x_up, -L, L), same with cuda implementation
+// input   : {num_tokens, 2 * d}
+// output  : {num_tokens, d}
+void silu_and_mul_clamp_cpu(const at::Tensor& input, at::Tensor& output, double limit) {
+  CHECK_INPUT(input);
+  CHECK_INPUT(output);
+  CHECK_DIM(2, input);
+  CHECK_DIM(2, output);
+  TORCH_CHECK(input.size(-1) == 2 * output.size(-1), "Invalid dimension");
+
+  int64_t d = output.size(-1);
+  int64_t num_tokens = output.numel() / d;
+
+  AT_DISPATCH_REDUCED_FLOATING_TYPES(input.scalar_type(), "silu_and_mul_clamp_cpu", [&] {
+    using Vec = at::vec::Vectorized<float>;
+    act_and_mul_kernel_impl<true>(
+        output.data_ptr<scalar_t>(),
+        input.const_data_ptr<scalar_t>(),
+        num_tokens,
+        d,
+        [](float x) { return x / (1.f + std::exp(-x)); },
+        [](Vec x) { return fast_silu(x); },
+        static_cast<float>(limit));
+  });
 }
 
 at::Tensor gelu_tanh_and_mul_cpu(const at::Tensor& input) {

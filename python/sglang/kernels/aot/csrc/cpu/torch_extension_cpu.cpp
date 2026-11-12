@@ -31,7 +31,6 @@ at::Tensor sparse_attention_cpu(
     double);
 std::tuple<at::Tensor, at::Tensor>
 sqrtsoftplus_topk_cpu(const at::Tensor&, const std::optional<at::Tensor>&, int64_t, bool);
-void silu_and_mul_clamp_cpu(const at::Tensor&, at::Tensor, double);
 std::tuple<at::Tensor, at::Tensor, at::Tensor>
 hc_split_sinkhorn_cpu(const at::Tensor&, const at::Tensor&, const at::Tensor&, int64_t, int64_t, double);
 at::Tensor hc_combine_cpu(const at::Tensor&, const at::Tensor&, int64_t);
@@ -47,6 +46,7 @@ void norm_rope_cpu(
 
 // silu_and_mul
 at::Tensor silu_and_mul_cpu(at::Tensor& input);
+void silu_and_mul_clamp_cpu(const at::Tensor& input, at::Tensor& output, double limit);
 
 // gelu_and_mul
 at::Tensor gelu_tanh_and_mul_cpu(const at::Tensor& input);
@@ -674,8 +674,6 @@ TORCH_LIBRARY_FRAGMENT(sgl_kernel, m) {
   m.impl("dsv41_sparse_attention_cpu", torch::kCPU, &dsv4_cpu::sparse_attention_cpu);
   m.def("dsv41_sqrtsoftplus_topk_cpu(Tensor logits, Tensor? bias, int topk, bool renormalize) -> (Tensor, Tensor)");
   m.impl("dsv41_sqrtsoftplus_topk_cpu", torch::kCPU, &dsv4_cpu::sqrtsoftplus_topk_cpu);
-  m.def("silu_and_mul_clamp_cpu(Tensor input, Tensor(a!) output, float limit) -> ()");
-  m.impl("silu_and_mul_clamp_cpu", torch::kCPU, &dsv4_cpu::silu_and_mul_clamp_cpu);
   m.def(
       "dsv4_hc_split_sinkhorn_cpu(Tensor mixes, Tensor scale, Tensor base, int hc, int iters, float eps) -> (Tensor, "
       "Tensor, Tensor)");
@@ -691,6 +689,8 @@ TORCH_LIBRARY_FRAGMENT(sgl_kernel, m) {
   // activation
   m.def("silu_and_mul_cpu(Tensor input) -> Tensor");
   m.impl("silu_and_mul_cpu", torch::kCPU, &silu_and_mul_cpu);
+  m.def("silu_and_mul_clamp_cpu(Tensor input, Tensor(a!) output, float limit) -> ()");
+  m.impl("silu_and_mul_clamp_cpu", torch::kCPU, &silu_and_mul_clamp_cpu);
   m.def("gelu_tanh_and_mul_cpu(Tensor input) -> Tensor");
   m.impl("gelu_tanh_and_mul_cpu", torch::kCPU, &gelu_tanh_and_mul_cpu);
   m.def("gelu_and_mul_cpu(Tensor input) -> Tensor");

@@ -8,13 +8,14 @@ from sglang.kernels.jit.utils import (
     load_jit,
     make_cpp_args,
 )
-from sglang.srt.utils import is_hip, is_xpu
+from sglang.srt.utils import is_cpu, is_hip, is_xpu
 
 from .kv_layout import KVLayout
 from .utils import make_name
 
 _is_hip = is_hip()
 _is_xpu = is_xpu()
+_is_cpu = is_cpu()
 
 if _is_xpu:
     from sgl_kernel import fused_k_norm_rope_flashmla as fused_k_norm_rope_flashmla_xpu
@@ -155,7 +156,7 @@ def fused_rope_inplace(
         positions: [batch_size] int32 or int64, indices into freqs_cis
         inverse: if True, apply inverse rotation (conjugate freqs)
     """
-    if q.device.type == "cpu":
+    if _is_cpu:
         torch.ops.sgl_kernel.dsv4_norm_rope_cpu(
             q, None, freqs_cis, positions, None, inverse
         )
@@ -186,7 +187,7 @@ def fused_norm_rope_inplace(
     freq_cis: torch.Tensor,
     positions: torch.Tensor,
 ) -> None:
-    if kv.device.type == "cpu":
+    if _is_cpu:
         torch.ops.sgl_kernel.dsv4_norm_rope_cpu(
             kv, weight, freq_cis, positions, eps, False
         )
@@ -211,7 +212,7 @@ def fused_q_norm_rope(
     freqs_cis: torch.Tensor,
     positions: torch.Tensor,
 ) -> None:
-    if q_input.device.type == "cpu":
+    if _is_cpu:
         q_output.copy_(q_input)
         torch.ops.sgl_kernel.dsv4_norm_rope_cpu(
             q_output, None, freqs_cis, positions, eps, False
