@@ -9,59 +9,16 @@ from sglang.srt.layers.attention.dsv4.dsv41_sparse import token_req_indices
 from sglang.srt.mem_cache.deepseek_v4_compress_state import KVAndScore
 
 
-def _sparse_attention_cpu_ref(
-    query: torch.Tensor,
-    swa: torch.Tensor,
-    extra: torch.Tensor,
-    swa_slots: torch.Tensor,
-    extra_slots: torch.Tensor,
-    sink: torch.Tensor,
-    scale: float,
-) -> torch.Tensor:
-    # TODO(xinguozhu-2026): Replace with torch.ops.sgl_kernel.dsv41_sparse_attention_cpu.
-    assert query.ndim == 3 and swa.ndim == 2 and extra.ndim == 2
-    assert swa.shape[1] == query.shape[2] and extra.shape[1] == query.shape[2]
-    assert swa.dtype == query.dtype and extra.dtype == query.dtype
-    assert (
-        swa_slots.ndim == 2
-        and extra_slots.ndim == 2
-        and swa_slots.shape[0] == query.shape[0]
-        and extra_slots.shape[0] == query.shape[0]
-        and swa_slots.dtype == torch.int64
-        and extra_slots.dtype == torch.int64
-        and sink.ndim == 1
-        and sink.shape[0] == query.shape[1]
-        and sink.dtype == torch.float32
-    )
-    assert bool((swa_slots >= -1).all() and (swa_slots < swa.shape[0]).all()), (
-        "Sparse attention cache slot out of range"
-    )
-    assert bool((extra_slots >= -1).all() and (extra_slots < extra.shape[0]).all()), (
-        "Sparse attention cache slot out of range"
-    )
-    output = torch.empty_like(query)
-    for row in range(query.shape[0]):
-        sw, ex = swa_slots[row], extra_slots[row]
-        keys = torch.cat([swa[sw[sw >= 0]], extra[ex[ex >= 0]]], dim=0).float()
-        if keys.shape[0] == 0:
-            output[row].zero_()
-            continue
-        logits = query[row].float() @ keys.T * float(scale)
-        probabilities = torch.cat([logits, sink[:, None]], dim=-1).softmax(dim=-1)
-        output[row] = (probabilities[:, :-1] @ keys).to(query.dtype)
-    return output
-
-
 class DeepseekV4CPUBackend(AttentionBackend):
     def __init__(self, model_runner):
         config = model_runner.model_config.hf_text_config
-        assert (
-            config.model_type == "deepseek_v41"
-        ), "CPU dsv4 attention currently requires DeepSeek-V4.1"
+        assert config.model_type == "deepseek_v41", (
+            "CPU dsv4 attention currently requires DeepSeek-V4.1"
+        )
         # TODO(xinguozhu-2026): Support speculative decoding (DSpark) for DeepSeek-V4.1 on CPU.
-        assert (
-            model_runner.spec_algorithm.is_none()
-        ), "CPU DeepSeek-V4.1 does not support speculative decoding"
+        assert model_runner.spec_algorithm.is_none(), (
+            "CPU DeepSeek-V4.1 does not support speculative decoding"
+        )
         self.token_to_kv_pool = model_runner.token_to_kv_pool
         self.req_to_token = model_runner.req_to_token_pool.req_to_token
         self.window = config.sliding_window
@@ -218,7 +175,7 @@ class DeepseekV4CPUBackend(AttentionBackend):
             if compress_ratio
             else torch.empty((q.shape[0], 0), dtype=torch.long)
         )
-        return _sparse_attention_cpu_ref(
+        return torch.ops.sgl_kernel.dsv41_sparse_attention_cpu(
             q.contiguous(),
             swa_cache,
             extra_cache,

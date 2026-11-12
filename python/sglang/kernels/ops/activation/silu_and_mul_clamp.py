@@ -60,19 +60,7 @@ def silu_and_mul_clamp(
     swiglu_limit: float,
 ) -> None:
     if input.device.type == "cpu":
-        # TODO(xinguozhu-2026): Replace with torch.ops.sgl_kernel.silu_and_mul_clamp_cpu.
-        assert (
-            input.ndim == 2
-            and output.ndim == 2
-            and input.shape[0] == output.shape[0]
-            and input.shape[1] == 2 * output.shape[1]
-            and input.dtype == output.dtype
-        )
-        assert swiglu_limit > 0
-        limit = float(swiglu_limit)
-        gate, up = input.float().chunk(2, dim=-1)
-        res = torch.nn.functional.silu(gate.clamp(max=limit)) * up.clamp(-limit, limit)
-        output.copy_(res.to(output.dtype))
+        torch.ops.sgl_kernel.silu_and_mul_clamp_cpu(input, output, swiglu_limit)
         return
     if _is_xpu:
         from sgl_kernel import silu_and_mul_clamp
