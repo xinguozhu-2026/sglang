@@ -56,12 +56,13 @@ from sglang.srt.model_executor.runner_utils.prefill_graph import (
 )
 from sglang.srt.models.deepseek_v2 import MoEOutput
 from sglang.srt.runtime_context import get_forward, get_parallel, get_platform
-from sglang.srt.utils import is_gfx95_supported, is_hip, is_npu, is_xpu
+from sglang.srt.utils import is_gfx95_supported, is_hip, is_npu, is_xpu, is_cpu
 
 _is_gfx95_supported = is_gfx95_supported()
 _is_hip = is_hip()
 _is_npu = is_npu()
 _is_xpu = is_xpu()
+_is_cpu = is_cpu()
 
 # The fused all-reduce epilogues have world-size-templated kernels for TP2 and TP4.
 _FUSED_MHC_TP_SIZES = (2, 4)
@@ -587,13 +588,6 @@ def post(
     comb: torch.Tensor,
 ) -> torch.Tensor:
     """``R'[i] = post[i] * x + sum_j comb[j][i] * R[j]``, by whichever kernel fits."""
-    if x.device.type == "cpu":
-        return torch.ops.sgl_kernel.dsv4_hc_post_cpu(
-            x.contiguous(),
-            residual.contiguous(),
-            post_mix.contiguous(),
-            comb.contiguous(),
-        )
     if x.shape[0] == 0:
         return torch.empty((0, cfg.mult, x.shape[-1]), dtype=x.dtype, device=x.device)
 
@@ -613,6 +607,9 @@ def post(
         from sglang.srt.models.deepseek_v4 import get_mhc_ops
 
         return get_mhc_ops().mhc_post(x, residual, post_mix, comb)
+
+    if _is_cpu:
+        return torch.ops.sgl_kernel_mhc_post_cpu(x, residual, post_mix, comb)
 
     if (
         get_platform().is_blackwell
