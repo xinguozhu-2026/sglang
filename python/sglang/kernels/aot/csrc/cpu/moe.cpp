@@ -891,10 +891,6 @@ at::Tensor fused_experts_cpu(
     bool is_vnni,
     const std::optional<std::string>& activation) {
   const CPUActMethod act_func = act_method_from_string(activation, alpha.has_value() && limit.has_value());
-  TORCH_CHECK(
-      act_func != CPUActMethod::silu_clamped ||
-          (moe_comp_method == CPUQuantMethod::MXFP4 && limit.has_value() && limit.value() > 0),
-      "silu_clamped requires MXFP4 weights and a positive limit");
   // The int8 kernel only supports SiLU; int4 supports SiLU and GELU.
   TORCH_CHECK(
       !(moe_comp_method == CPUQuantMethod::INT8_W8A8) || act_func == CPUActMethod::silu_and_mul,
@@ -903,6 +899,9 @@ at::Tensor fused_experts_cpu(
       moe_comp_method != CPUQuantMethod::INT4_W4A8 || act_func == CPUActMethod::silu_and_mul ||
           act_func == CPUActMethod::gelu_and_mul,
       "fused_experts_cpu: INT4_W4A8 supports activation='silu' or 'gelu'");
+  TORCH_CHECK(
+      act_func != CPUActMethod::silu_clamped || (limit.has_value() && limit.value() > 0),
+      "silu_clamped requires a positive limit");
 
   auto packed_w1 = is_vnni ? w1 : convert_weight_packed(w1);
   auto packed_w2 = is_vnni ? w2 : convert_weight_packed(w2);
