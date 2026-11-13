@@ -64,30 +64,55 @@ void hc_post_kernel_impl(
       const float* comb_m = comb + m * K * K;
       scalar_t* out_m = out + m * K * H;
 
-      for (int64_t j = 0; j < K; ++j) {
-        const fVec p_vec(post_m[j]);
-        scalar_t* out_mj = out_m + j * H;
-
-        int64_t d = 0;
+      int64_t d = 0;
+      if (K == 4) {
         for (; d + kVecSize <= H; d += kVecSize) {
           auto [x0, x1] = load_float_vec2(x_m + d);
+          auto [r0_a, r0_b] = load_float_vec2(res_m + 0 * H + d);
+          auto [r1_a, r1_b] = load_float_vec2(res_m + 1 * H + d);
+          auto [r2_a, r2_b] = load_float_vec2(res_m + 2 * H + d);
+          auto [r3_a, r3_b] = load_float_vec2(res_m + 3 * H + d);
+          for (int64_t j = 0; j < 4; ++j) {
+            const fVec p_vec(*(post_m + j));
+            const fVec c0(*(comb_m + 0 * 4 + j));
+            const fVec c1(*(comb_m + 1 * 4 + j));
+            const fVec c2(*(comb_m + 2 * 4 + j));
+            const fVec c3(*(comb_m + 3 * 4 + j));
+            fVec acc0 = at::vec::fmadd(r0_a, c0, x0 * p_vec);
+            fVec acc1 = at::vec::fmadd(r0_b, c0, x1 * p_vec);
+            acc0 = at::vec::fmadd(r1_a, c1, acc0);
+            acc1 = at::vec::fmadd(r1_b, c1, acc1);
+            acc0 = at::vec::fmadd(r2_a, c2, acc0);
+            acc1 = at::vec::fmadd(r2_b, c2, acc1);
+            acc0 = at::vec::fmadd(r3_a, c3, acc0);
+            acc1 = at::vec::fmadd(r3_b, c3, acc1);
+            store_float_vec2(out_m + j * H + d, acc0, acc1);
+          }
+        }
+      }
+      for (; d + kVecSize <= H; d += kVecSize) {
+        auto [x0, x1] = load_float_vec2(x_m + d);
+        for (int64_t j = 0; j < K; ++j) {
+          const fVec p_vec(*(post_m + j));
           fVec acc0 = x0 * p_vec;
           fVec acc1 = x1 * p_vec;
           for (int64_t i = 0; i < K; ++i) {
-            // Column-wise consumption: comb[m, i, j]
-            const fVec c_vec(comb_m[i * K + j]);
+            const fVec c_vec(*(comb_m + i * K + j));
             auto [r0, r1] = load_float_vec2(res_m + i * H + d);
             acc0 = at::vec::fmadd(r0, c_vec, acc0);
             acc1 = at::vec::fmadd(r1, c_vec, acc1);
           }
-          store_float_vec2(out_mj + d, acc0, acc1);
+          store_float_vec2(out_m + j * H + d, acc0, acc1);
         }
-        for (; d < H; ++d) {
-          float acc = post_m[j] * static_cast<float>(x_m[d]);
+      }
+      for (; d < H; ++d) {
+        const float xv = static_cast<float>(*(x_m + d));
+        for (int64_t j = 0; j < K; ++j) {
+          float acc = (*(post_m + j)) * xv;
           for (int64_t i = 0; i < K; ++i) {
-            acc += comb_m[i * K + j] * static_cast<float>(res_m[i * H + d]);
+            acc += (*(comb_m + i * K + j)) * static_cast<float>(*(res_m + i * H + d));
           }
-          out_mj[d] = static_cast<scalar_t>(acc);
+          *(out_m + j * H + d) = static_cast<scalar_t>(acc);
         }
       }
     }
@@ -143,11 +168,7 @@ std::tuple<at::Tensor, at::Tensor, at::Tensor> hc_split_sinkhorn_cpu(
   float* comb_ptr = comb.data_ptr<float>();
 
   AT_DISPATCH_FLOATING_TYPES_AND2(
-      at::ScalarType::BFloat16,
-      at::ScalarType::Half,
-      mixes.scalar_type(),
-      "hc_split_sinkhorn_cpu",
-      [&] {
+      at::ScalarType::BFloat16, at::ScalarType::Half, mixes.scalar_type(), "hc_split_sinkhorn_cpu", [&] {
         const scalar_t* mix_ptr = mixes.const_data_ptr<scalar_t>();
         at::parallel_for(0, M, 0, [&](int64_t begin, int64_t end) {
           for (int64_t m = begin; m < end; ++m) {
@@ -249,29 +270,20 @@ at::Tensor hc_combine_cpu(const at::Tensor& x_flat, const at::Tensor& pre, int64
   }
 
   AT_DISPATCH_REDUCED_FLOATING_TYPES(x_flat.scalar_type(), "hc_combine_cpu", [&] {
-    hc_combine_kernel_impl<scalar_t>(
-        out.data_ptr<scalar_t>(),
-        x_flat.const_data_ptr<scalar_t>(),
-        pre_ptr,
-        M,
-        hc,
-        H);
+    hc_combine_kernel_impl<scalar_t>(out.data_ptr<scalar_t>(), x_flat.const_data_ptr<scalar_t>(), pre_ptr, M, hc, H);
   });
   return out;
 }
 
-at::Tensor mhc_post_cpu(
-    const at::Tensor& x,
-    const at::Tensor& residual,
-    const at::Tensor& post_mix,
-    const at::Tensor& comb) {
-  CHECK_INPUT(x);
-  CHECK_INPUT(residual);
+at::Tensor
+mhc_post_cpu(const at::Tensor& x, const at::Tensor& residual, const at::Tensor& post_mix, const at::Tensor& comb) {
   TORCH_CHECK(x.scalar_type() == residual.scalar_type(), "x and residual dtype mismatch");
   TORCH_CHECK(x.dim() == 2, "x must be 2D [M, H]");
+  at::Tensor x_c = x.contiguous();
+  at::Tensor res_c = residual.contiguous();
 
-  const int64_t M = x.size(0);
-  const int64_t H = x.size(1);
+  const int64_t M = x_c.size(0);
+  const int64_t H = x_c.size(1);
   at::Tensor out = at::empty_like(residual);
   if (M == 0) {
     return out;
@@ -286,18 +298,17 @@ at::Tensor mhc_post_cpu(
   at::Tensor comb_f = comb.to(at::kFloat).contiguous();
 
   if (x.scalar_type() == at::kFloat) {
-    auto res_3d = residual.view({M, K, H});
+    auto res_3d = res_c.view({M, K, H});
     auto comb_3d = comb_f.view({M, K, K});
     auto post_3d = post_f.view({M, K, 1});
-    return (at::bmm(comb_3d.transpose(1, 2), res_3d) + post_3d * x.unsqueeze(1))
-        .reshape(residual.sizes());
+    return (at::bmm(comb_3d.transpose(1, 2), res_3d) + post_3d * x_c.unsqueeze(1)).reshape(residual.sizes());
   }
 
   AT_DISPATCH_REDUCED_FLOATING_TYPES(x.scalar_type(), "hc_post_cpu", [&] {
     hc_post_kernel_impl<scalar_t>(
         out.data_ptr<scalar_t>(),
-        x.const_data_ptr<scalar_t>(),
-        residual.const_data_ptr<scalar_t>(),
+        x_c.const_data_ptr<scalar_t>(),
+        res_c.const_data_ptr<scalar_t>(),
         post_f.const_data_ptr<float>(),
         comb_f.const_data_ptr<float>(),
         M,

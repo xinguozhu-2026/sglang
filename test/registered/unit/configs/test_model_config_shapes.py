@@ -1,7 +1,6 @@
 import math
 import unittest
 from types import SimpleNamespace
-from unittest.mock import patch
 
 from sglang.srt.configs.model_config import (
     AttentionArch,
