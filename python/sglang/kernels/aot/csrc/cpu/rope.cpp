@@ -96,6 +96,13 @@ struct RopeParams {
     }
   }
 
+  RopeParams(const at::Tensor& query, const std::optional<at::Tensor>& key, int64_t rotary_dim_)
+      : RopeParams(query, key.value_or(query), rotary_dim_, rotary_dim_) {
+    if (!key.has_value()) {
+      num_heads_kv = 0;
+    }
+  }
+
   inline int64_t rows() const {
     return batches * seqlen;
   }
@@ -129,6 +136,7 @@ struct SplitCosSinRow {
   const param_t* sin;
   int64_t cos_stride{1};
   int64_t sin_stride{1};
+  bool inverse{false};
 };
 
 // Already-indexed T/H/W cache rows for 2D mRoPE (no gathered buffer).
@@ -178,6 +186,37 @@ struct RotaryEmbedInternal<scalar_t, RotaryMode::Interleaved> {
     for (; d < size; d += 2) {
       float x = input[d], y = input[d + 1];
       float cos = cache[d >> 1], sin = cache[half_size + (d >> 1)];
+      out[d] = static_cast<scalar_t>(x * cos - y * sin);
+      out[d + 1] = static_cast<scalar_t>(y * cos + x * sin);
+    }
+  }
+
+  template <typename param_t>
+  static inline void
+  apply(scalar_t* __restrict__ out, const scalar_t* __restrict__ input, SplitCosSinRow<param_t> cache, int size) {
+    constexpr int kVecSize = 2 * at::vec::Vectorized<float>::size();
+
+    int d = 0;
+    for (; d <= size - kVecSize; d += kVecSize) {
+      auto [xy0, xy1] = load_float_vec2(input + d);
+      auto [x, y] = at::vec::deinterleave2(xy0, xy1);
+      auto [f0, f1] = load_float_vec2(cache.cos + d);
+      auto [cos, sin] = at::vec::deinterleave2(f0, f1);
+      if (cache.inverse) {
+        sin = sin.neg();
+      }
+      auto out0 = x * cos - y * sin;
+      auto out1 = y * cos + x * sin;
+      std::tie(xy0, xy1) = at::vec::interleave2(out0, out1);
+      store_float_vec2(out + d, xy0, xy1);
+    }
+    for (; d < size; d += 2) {
+      float x = static_cast<float>(input[d]), y = static_cast<float>(input[d + 1]);
+      float cos = static_cast<float>(cache.cos[d]);
+      float sin = static_cast<float>(cache.sin[d]);
+      if (cache.inverse) {
+        sin = -sin;
+      }
       out[d] = static_cast<scalar_t>(x * cos - y * sin);
       out[d + 1] = static_cast<scalar_t>(y * cos + x * sin);
     }
@@ -492,6 +531,56 @@ void apply_rotary_pos_emb_cpu(
       return {cos_ptr + cos_offset, sin_ptr + sin_offset, cos.stride(-1), sin.stride(-1)};
     };
     rotary_embedding_kernel_impl<scalar_t, RotaryMode::NeoxFull, true>(q_ptr, k_ptr, q_ptr, k_ptr, p, cache_pos);
+  });
+}
+
+// query:     [batch_size, num_q_heads, rope_dim]
+// key:       [batch_size, num_k_heads, rope_dim] optional
+// freqs_cis: [max_seq_len, rope_dim] float32 (interleaved cos/sin)
+// positions: [batch_size] int32 or int64
+void apply_rotary_emb_cpu(
+    at::Tensor& query,
+    std::optional<at::Tensor> key,
+    const at::Tensor& freqs_cis,
+    const at::Tensor& positions,
+    const bool inverse) {
+  CHECK_LAST_DIM_CONTIGUOUS_INPUT(query);
+  CHECK_INPUT(freqs_cis);
+  CHECK_INPUT(positions);
+
+  const auto input_dim = query.dim();
+  const auto input_dtype = query.scalar_type();
+  const int64_t batch_size = query.size(0);
+  const int64_t rotary_dim = query.size(-1);
+  TORCH_CHECK(input_dim == 2 || input_dim == 3);
+  TORCH_CHECK(rotary_dim % 2 == 0, "rotary_dim must be even");
+  if (key.has_value()) {
+    CHECK_EQ(key->dim(), input_dim);
+    CHECK_EQ(key->scalar_type(), input_dtype);
+    CHECK_EQ(key->size(0), batch_size);
+    CHECK_EQ(key->size(-1), rotary_dim);
+  }
+
+  CHECK_DIM(1, positions);
+  CHECK_EQ(positions.size(0), batch_size);
+  CHECK_DIM(2, freqs_cis);
+  CHECK_EQ(freqs_cis.size(1), rotary_dim);
+  CHECK_EQ(freqs_cis.scalar_type(), at::kFloat);
+
+  const RopeParams p{query, key, rotary_dim};
+  const float* freqs_ptr = freqs_cis.const_data_ptr<float>();
+
+  AT_DISPATCH_REDUCED_FLOATING_TYPES(input_dtype, "apply_rotary_emb_cpu", [&] {
+    scalar_t* q_ptr = query.data_ptr<scalar_t>();
+    scalar_t* k_ptr = key.has_value() ? key->data_ptr<scalar_t>() : nullptr;
+    AT_DISPATCH_INDEX_TYPES(positions.scalar_type(), "apply_rotary_emb_cpu_index", [&] {
+      const index_t* pos_ptr = positions.const_data_ptr<index_t>();
+      auto cache_pos = [=](int64_t token) -> SplitCosSinRow<float> {
+        const float* freqs_row = freqs_ptr + pos_ptr[token] * rotary_dim;
+        return {freqs_row, freqs_row + 1, 2, 2, inverse};
+      };
+      rotary_embedding_kernel_impl<scalar_t, RotaryMode::Interleaved, true>(q_ptr, k_ptr, q_ptr, k_ptr, p, cache_pos);
+    });
   });
 }
 

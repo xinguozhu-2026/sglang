@@ -156,15 +156,6 @@ def fused_rope_inplace(
         positions: [batch_size] int32 or int64, indices into freqs_cis
         inverse: if True, apply inverse rotation (conjugate freqs)
     """
-    if _is_cpu:
-        torch.ops.sgl_kernel.dsv4_norm_rope_cpu(
-            q, None, freqs_cis, positions, None, inverse
-        )
-        if k is not None:
-            torch.ops.sgl_kernel.dsv4_norm_rope_cpu(
-                k, None, freqs_cis, positions, None, inverse
-            )
-        return
     if _is_hip or _is_xpu:
         from sglang.kernels.ops.attention.dsv4.rope import (
             apply_rotary_emb_triton,
@@ -176,6 +167,9 @@ def fused_rope_inplace(
         return
 
     freqs_real = torch.view_as_real(freqs_cis).flatten(-2).contiguous()
+    if _is_cpu:
+        torch.ops.sgl_kernel.apply_rotary_emb_cpu(q, k, freqs_real, positions, inverse)
+        return
     module = _jit_fused_rope_module()
     module.forward(q, k, freqs_real, positions, inverse)
 
@@ -187,11 +181,6 @@ def fused_norm_rope_inplace(
     freq_cis: torch.Tensor,
     positions: torch.Tensor,
 ) -> None:
-    if _is_cpu:
-        torch.ops.sgl_kernel.dsv4_norm_rope_cpu(
-            kv, weight, freq_cis, positions, eps, False
-        )
-        return
     freq_cis = torch.view_as_real(freq_cis).flatten(-2)
     module = _jit_fused_norm_rope_module(kv.dtype, kv.shape[-1], freq_cis.shape[-1])
     module.forward(
@@ -212,12 +201,6 @@ def fused_q_norm_rope(
     freqs_cis: torch.Tensor,
     positions: torch.Tensor,
 ) -> None:
-    if _is_cpu:
-        q_output.copy_(q_input)
-        torch.ops.sgl_kernel.dsv4_norm_rope_cpu(
-            q_output, None, freqs_cis, positions, eps, False
-        )
-        return
     # Reuse the BF16 kernel and preserve its rounding before FP8 conversion.
     # Keep the temporary separate from q_input: callers may reuse the input.
     fp8_output = q_output if q_output.dtype == torch.float8_e4m3fn else None

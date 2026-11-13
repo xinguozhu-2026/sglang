@@ -35,13 +35,6 @@ std::tuple<at::Tensor, at::Tensor, at::Tensor>
 hc_split_sinkhorn_cpu(const at::Tensor&, const at::Tensor&, const at::Tensor&, int64_t, int64_t, double);
 at::Tensor hc_combine_cpu(const at::Tensor&, const at::Tensor&, int64_t);
 at::Tensor hc_post_cpu(const at::Tensor&, const at::Tensor&, const at::Tensor&, const at::Tensor&);
-void norm_rope_cpu(
-    at::Tensor,
-    const std::optional<at::Tensor>&,
-    const at::Tensor&,
-    const at::Tensor&,
-    const std::optional<double>&,
-    bool);
 }  // namespace dsv4_cpu
 
 // silu_and_mul
@@ -572,6 +565,12 @@ void rotary_embedding_cpu(
     bool is_neox);
 void apply_rotary_pos_emb_cpu(
     at::Tensor& query, at::Tensor& key, at::Tensor& cos, at::Tensor& sin, int64_t unsqueeze_dim);
+void apply_rotary_emb_cpu(
+    at::Tensor& query,
+    std::optional<at::Tensor> key,
+    const at::Tensor& freqs_cis,
+    const at::Tensor& positions,
+    bool inverse);
 
 // multidimensional rope
 void apply_multidimensional_rope_cpu(at::Tensor& query, at::Tensor& key, at::Tensor& cos, at::Tensor& sin);
@@ -682,10 +681,6 @@ TORCH_LIBRARY_FRAGMENT(sgl_kernel, m) {
   m.impl("dsv4_hc_combine_cpu", torch::kCPU, &dsv4_cpu::hc_combine_cpu);
   m.def("dsv4_hc_post_cpu(Tensor input, Tensor residual, Tensor post, Tensor comb) -> Tensor");
   m.impl("dsv4_hc_post_cpu", torch::kCPU, &dsv4_cpu::hc_post_cpu);
-  m.def(
-      "dsv4_norm_rope_cpu(Tensor(a!) input, Tensor? weight, Tensor freqs, Tensor positions, float? eps, bool inverse) "
-      "-> ()");
-  m.impl("dsv4_norm_rope_cpu", torch::kCPU, &dsv4_cpu::norm_rope_cpu);
   // activation
   m.def("silu_and_mul_cpu(Tensor input) -> Tensor");
   m.impl("silu_and_mul_cpu", torch::kCPU, &silu_and_mul_cpu);
@@ -1048,6 +1043,10 @@ TORCH_LIBRARY_FRAGMENT(sgl_kernel, m) {
   m.def(
       "apply_rotary_pos_emb_cpu(Tensor(a!) query, Tensor(b!) key, Tensor cos, Tensor sin, int unsqueeze_dim=1) -> ()");
   m.impl("apply_rotary_pos_emb_cpu", torch::kCPU, &apply_rotary_pos_emb_cpu);
+  m.def(
+      "apply_rotary_emb_cpu(Tensor(a!) query, Tensor(b!)? key, Tensor freqs_cis, Tensor positions, "
+      "bool inverse=False) -> ()");
+  m.impl("apply_rotary_emb_cpu", torch::kCPU, &apply_rotary_emb_cpu);
 
   // multidimensional rope
   m.def("apply_multidimensional_rope_cpu(Tensor(a!) query, Tensor(b!) key, Tensor cos, Tensor sin) -> ()");

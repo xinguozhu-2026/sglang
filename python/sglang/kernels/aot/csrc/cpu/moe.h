@@ -170,6 +170,7 @@ inline void silu_clamped_and_mul_stub(
   using fVec = at::vec::Vectorized<float>;
   const fVec hi(limit), lo(-limit);
   int64_t d = 0;
+#pragma GCC unroll 4
   for (; d + bVec::size() <= size; d += bVec::size()) {
     auto [g0, g1] = load_float_vec2(gate + d);
     auto [u0, u1] = load_float_vec2(up + d);

@@ -4,6 +4,8 @@
 #include "../common.h"
 #include "../vec.h"
 
+namespace dsv4_cpu {
+
 namespace {
 
 template <typename scalar_t>
@@ -280,67 +282,4 @@ hc_post_cpu(const at::Tensor& input, const at::Tensor& residual, const at::Tenso
   });
   return output;
 }
-
-void norm_rope_cpu(
-    at::Tensor input,
-    const std::optional<at::Tensor>& weight,
-    const at::Tensor& freqs,
-    const at::Tensor& positions,
-    const std::optional<double>& eps,
-    bool inverse) {
-  TORCH_CHECK(
-      input.device().is_cpu() && input.dim() >= 2 && input.dim() <= 3 && input.stride(-1) == 1,
-      "RoPE input must be a CPU [T, D] or [T, H, D] tensor with contiguous features");
-  CHECK_INPUT(freqs);
-  CHECK_INPUT(positions);
-  TORCH_CHECK(
-      freqs.dim() == 2 && freqs.scalar_type() == at::kComplexFloat && input.size(-1) >= 2 * freqs.size(1),
-      "Invalid RoPE frequencies");
-  TORCH_CHECK(positions.dim() == 1 && positions.size(0) == input.size(0), "Invalid RoPE positions");
-  if (weight.has_value()) {
-    CHECK_INPUT(weight.value());
-    TORCH_CHECK(eps.has_value() && weight->numel() == input.size(-1), "Invalid norm weight");
-  }
-  auto pos = positions.to(at::kLong);
-  auto w = weight.has_value() ? weight->to(at::kFloat) : at::Tensor();
-  const int64_t tokens = input.size(0), heads = input.dim() == 3 ? input.size(1) : 1;
-  const int64_t dim = input.size(-1), rope_dim = 2 * freqs.size(1);
-  const int64_t head_stride = input.dim() == 3 ? input.stride(1) : 0;
-  const auto* f = freqs.const_data_ptr<c10::complex<float>>();
-  const auto* p = pos.const_data_ptr<int64_t>();
-  for (int64_t t = 0; t < tokens; ++t) {
-    TORCH_CHECK(p[t] >= 0 && p[t] < freqs.size(0), "RoPE position out of range");
-  }
-  AT_DISPATCH_FLOATING_TYPES_AND2(at::kBFloat16, at::kHalf, input.scalar_type(), "dsv4_norm_rope_cpu", [&] {
-    auto* data = input.data_ptr<scalar_t>();
-    at::parallel_for(0, tokens * heads, 0, [&](int64_t begin, int64_t end) {
-      std::vector<float> values(dim);
-      for (int64_t row = begin; row < end; ++row) {
-        const int64_t token = row / heads, head = row % heads;
-        auto* x = data + token * input.stride(0) + head * head_stride;
-        float sum = 0.f;
-        for (int64_t d = 0; d < dim; ++d) {
-          values[d] = static_cast<float>(x[d]);
-          sum += values[d] * values[d];
-        }
-        if (eps.has_value()) {
-          const float rstd = 1.f / std::sqrt(sum / dim + static_cast<float>(*eps));
-          for (int64_t d = 0; d < dim; ++d) {
-            values[d] *= rstd * (w.defined() ? w.const_data_ptr<float>()[d] : 1.f);
-          }
-        }
-        for (int64_t d = 0; d < rope_dim; d += 2) {
-          const auto freq = f[p[token] * freqs.size(1) + d / 2];
-          const float cos = freq.real(), sin = inverse ? -freq.imag() : freq.imag();
-          const int64_t offset = dim - rope_dim + d;
-          const float a = values[offset], b = values[offset + 1];
-          values[offset] = a * cos - b * sin;
-          values[offset + 1] = a * sin + b * cos;
-        }
-        for (int64_t d = 0; d < dim; ++d) {
-          x[d] = static_cast<scalar_t>(values[d]);
-        }
-      }
-    });
-  });
-}
+}  // namespace dsv4_cpu
