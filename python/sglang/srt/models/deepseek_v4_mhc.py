@@ -609,7 +609,7 @@ def post(
         return get_mhc_ops().mhc_post(x, residual, post_mix, comb)
 
     if _is_cpu:
-        return torch.ops.sgl_kernel_mhc_post_cpu(x, residual, post_mix, comb)
+        return torch.ops.sgl_kernel.mhc_post_cpu(x, residual, post_mix, comb)
 
     if (
         get_platform().is_blackwell

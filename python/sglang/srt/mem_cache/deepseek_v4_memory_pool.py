@@ -52,7 +52,7 @@ from sglang.srt.mem_cache.device_pool_info import DevicePoolInfo
 from sglang.srt.mem_cache.hicache_storage import PoolName
 from sglang.srt.mem_cache.memory_pool import KVCache
 from sglang.srt.runtime_context import get_exec, get_platform, get_spec
-from sglang.srt.utils import ceil_div, is_gfx95_supported, is_hip
+from sglang.srt.utils import ceil_div, is_cpu, is_gfx95_supported, is_hip
 
 logger = logging.getLogger(__name__)
 
@@ -457,6 +457,62 @@ class DeepSeekV4UniformFP8KVPool(DeepSeekV4SingleKVPool):
         ] = cache_k.to(torch.float8_e4m3fn).view(torch.uint8)
 
 
+class DeepSeekV4BF16KVPool(DeepSeekV4SingleKVPool):
+    """Contiguous BF16 latent rows (448 NoPE + 64 RoPE = 1024 B/token) for CPU AMX."""
+
+    def get_bytes_per_token(self) -> int:
+        return (self.qk_nope_head_dim + self.qk_rope_head_dim) * 2
+
+    def paged_buffer_info(self) -> DSV4PagedBufferInfo:
+        return DSV4PagedBufferInfo.from_buffers(
+            self.kv_buffer, page_slots=self.page_size, layout="bf16"
+        )
+
+    def create_buffer(self, *, num_pages: int):
+        head_dim = self.qk_nope_head_dim + self.qk_rope_head_dim
+        bytes_per_token = self.get_bytes_per_token()
+        self.kv_cache_total_dim = bytes_per_token
+        self.bytes_per_page_padded = self.page_size * bytes_per_token
+        return torch.zeros(
+            num_pages,
+            self.page_size * head_dim,
+            dtype=torch.bfloat16,
+            device=self.device,
+        )
+
+    def get_key_buffer(self, layer_id: int):
+        head_dim = self.qk_nope_head_dim + self.qk_rope_head_dim
+        return self.kv_buffer[layer_id - self.start_layer].view(-1, head_dim)
+
+    def set_key_buffer(
+        self,
+        layer_id: int,
+        loc: torch.Tensor,
+        cache_nope_fp8_rope_bf16_pack: NopeFp8RopeBf16Pack,
+    ):
+        raise NotImplementedError(
+            "The packed NopeFp8RopeBf16Pack store does not apply to "
+            "DeepSeekV4BF16KVPool; use set_key_buffer_fused."
+        )
+
+    def set_key_buffer_fused(
+        self,
+        layer_id: int,
+        loc: torch.Tensor,
+        cache_k: torch.Tensor,
+        freqs_cis: Optional[torch.Tensor] = None,
+    ) -> None:
+        if freqs_cis is not None:
+            from sglang.srt.layers.attention.dsv4.dsv41_sparse import rope_tail
+
+            cache_k = rope_tail(cache_k, freqs_cis, self.qk_rope_head_dim)
+        valid = loc > 0
+        if valid.any():
+            self.get_key_buffer(layer_id)[loc[valid].long()] = cache_k[valid].to(
+                torch.bfloat16
+            )
+
+
 class HiSparseC4DevicePool(HiSparseDevicePoolMappingMixin, DeepSeekV4SingleKVPool):
     def __init__(
         self,
@@ -756,6 +812,44 @@ class DeepSeekV4IndexerPool(KVCache):
         loc: torch.Tensor,
         cache_k: torch.Tensor,
     ) -> None:
+        if not cache_k.is_cuda:
+            valid = loc > 0
+            if not valid.any():
+                return
+            buf = self.index_k_with_scale_buffer[layer_id - self.start_layer]
+            valid_loc = loc[valid].long()
+            x_blocks = cache_k[valid].float().view(-1, 4, 32)
+            amax = x_blocks.abs().amax(dim=-1).clamp_min(2**-126)
+            exps = (
+                torch.ceil(torch.log2(amax / 6.0)).to(torch.int32) + 127
+            ).clamp(0, 254)
+            scales = torch.exp2((exps - 127).float()).unsqueeze(-1)
+            scaled = (x_blocks / scales).reshape(-1, 128)
+            sign = (scaled < 0).to(torch.uint8) << 3
+            ax = scaled.abs()
+            mag = (
+                (ax > 0.25).to(torch.uint8)
+                + (ax >= 0.75).to(torch.uint8)
+                + (ax > 1.25).to(torch.uint8)
+                + (ax >= 1.75).to(torch.uint8)
+                + (ax > 2.5).to(torch.uint8)
+                + (ax >= 3.5).to(torch.uint8)
+                + (ax > 5.0).to(torch.uint8)
+            )
+            codes = sign | mag
+            packed = (codes[:, 0::2] | (codes[:, 1::2] << 4)).contiguous()
+            p = self.page_size
+            page = (valid_loc // p).unsqueeze(-1)
+            off = valid_loc % p
+            payload_cols = (off * 64).unsqueeze(-1) + torch.arange(
+                64, device=buf.device
+            )
+            scale_cols = (p * 64 + off * 4).unsqueeze(-1) + torch.arange(
+                4, device=buf.device
+            )
+            buf[page, payload_cols] = packed
+            buf[page, scale_cols] = exps.to(torch.uint8)
+            return
         if self.uses_aiter_fp4_layout:
             # the FlyDSL kernels read the fp4 payload and the packed ue8m0 scales
             # from two buffers
@@ -1110,6 +1204,7 @@ class DeepSeekV4TokenToKVPool(BaseSWAKVPool):
         self.uniform_fp8 = (
             not self._unified_kv
         ) and get_exec().kernel.dsv4_attn_backend == "trtllm"
+        self.cpu_bf16 = is_cpu() and not self._unified_kv and not self.uniform_fp8
         if self.uniform_fp8:
             assert self.kv_layout is KVLayout.V4, (
                 "--dsv4-attn-backend trtllm keeps its own uniform 512-byte pages; "
@@ -1298,6 +1393,8 @@ class DeepSeekV4TokenToKVPool(BaseSWAKVPool):
                     f"kv_cache_dtype=fp8_e4m3, got {dtype}"
                 )
                 kv_pool_cls = DeepSeekV4UniformFP8KVPool
+            elif self.cpu_bf16:
+                kv_pool_cls = DeepSeekV4BF16KVPool
             self.swa_kv_pool = self._make_kv_pool(
                 size=swa_size,
                 page_size=swa_kv_page_size,
@@ -1879,6 +1976,8 @@ class DeepSeekV4TokenToKVPool(BaseSWAKVPool):
         """The main and compressed KV layouts, which PD peers must share."""
         if self.uniform_fp8:
             return KVLayout.UNIFORM_FP8.value
+        if self.cpu_bf16:
+            return "bf16"
         compressed = [
             f"c{ratio}:{self.compressed_kv_layout(ratio).value}"
             for ratio in sorted(set(self.compression_ratios) - {0})
@@ -2220,7 +2319,7 @@ class DeepSeekV4TokenToKVPool(BaseSWAKVPool):
     def get_swa_key_bytes_per_token(self) -> int:
         """Last dim of the ``(pages, page_size, 1, bytes)`` view the attention
         kernel detects the SWA cache's format from."""
-        if self.uniform_fp8:
+        if self.uniform_fp8 or self.cpu_bf16:
             # The trtllm uniform-FP8 pool has no paged FlashMLA layout: 512 B/token.
             return self.swa_kv_pool.kv_cache_total_dim
         return self.kv_layout.bytes_per_token
@@ -2376,6 +2475,10 @@ class DeepSeekV4TokenToKVPool(BaseSWAKVPool):
         swa_loc: torch.Tensor,
         cache_k: torch.Tensor,
     ) -> None:
+        if self.cpu_bf16:
+            return self.swa_kv_pool.set_key_buffer_fused(
+                self._swa_local_layer_id(layer_id), swa_loc, cache_k
+            )
         return fused_store_cache(
             input=cache_k,
             cache=self.get_swa_raw_buffer(layer_id),
@@ -2397,6 +2500,17 @@ class DeepSeekV4TokenToKVPool(BaseSWAKVPool):
         q: Optional[torch.Tensor] = None,
     ) -> None:
         """q ([B, H, head_dim]): rope its query heads in the same launch."""
+        if self.cpu_bf16:
+            from sglang.kernels.ops.attention.dsv4 import fused_norm_rope_inplace
+            from sglang.kernels.ops.attention.dsv4.norm_rope import fused_rope_inplace
+
+            if q is not None:
+                fused_rope_inplace(
+                    q[..., -self.qk_rope_head_dim :], None, freqs_cis, positions
+                )
+            kv_fp32 = kv.float().contiguous()
+            fused_norm_rope_inplace(kv_fp32, kv_weight, eps, freqs_cis, positions)
+            return self.set_swa_key_buffer_radix_fused(layer_id, swa_loc, kv_fp32)
         if self.uniform_fp8:
             assert q is None, "uniform FP8 store does not fuse query RoPE"
             fused_k_norm_rope_uniform_fp8(
@@ -2458,7 +2572,7 @@ class DeepSeekV4TokenToKVPool(BaseSWAKVPool):
         ``freqs_cis`` if it is not rotated yet: the kernel rounds to e2m1 once."""
         _, compress_layer_id, compress_kv_pool = self.layer_mapping[layer_id]
         assert compress_kv_pool is not None
-        if freqs_cis is not None:
+        if freqs_cis is not None and not self.cpu_bf16:
             assert compress_kv_pool.kv_layout.is_fp4, (
                 "in-kernel RoPE is for the fp4 cache; fp8 caches take the finished value"
             )

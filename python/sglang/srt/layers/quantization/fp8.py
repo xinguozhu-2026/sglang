@@ -781,12 +781,14 @@ class Fp8LinearMethod(LinearMethodBase):
             weight = layer.weight.data
             scale = layer.weight_scale_inv.float()
             n, k = weight.shape
-            dequantized = (
-                weight.float().view(n // 32, 32, k // 32, 32) * scale[:, None, :, None]
-            ).reshape(n, k)
+            expanded_scale = scale.repeat_interleave(32, dim=0).repeat_interleave(
+                32, dim=1
+            )[:n, :k]
+            dequantized = weight.float() * expanded_scale
             layer.weight = Parameter(
                 dequantized.to(torch.bfloat16), requires_grad=False
             )
+            del layer.weight_scale_inv
             return
         if self.use_npu_block_fp8:
             # G-B consumes checkpoint-layout E4M3 weights and FP32 scales.

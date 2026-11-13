@@ -102,6 +102,17 @@ void fused_qk_norm_rope_cpu(
     const at::Tensor& cos_sin_cache,
     int64_t rotary_dim);
 
+std::tuple<at::Tensor, at::Tensor, at::Tensor> hc_split_sinkhorn_cpu(
+    const at::Tensor& mixes,
+    const at::Tensor& scale,
+    const at::Tensor& base,
+    double hc_mult,
+    int64_t sinkhorn_iters,
+    double eps);
+at::Tensor hc_combine_cpu(const at::Tensor& x_flat, const at::Tensor& pre, int64_t hc);
+at::Tensor mhc_post_cpu(
+    const at::Tensor& x, const at::Tensor& residual, const at::Tensor& post_mix, const at::Tensor& comb);
+
 // fused_qk_rmsnorm
 std::tuple<at::Tensor, at::Tensor> fused_qk_rmsnorm_cpu(
     const at::Tensor& q, const at::Tensor& k, const at::Tensor& q_weight, const at::Tensor& k_weight, double eps);
@@ -695,6 +706,14 @@ TORCH_LIBRARY_FRAGMENT(sgl_kernel, m) {
       "fused_qk_norm_rope_cpu(Tensor(a!) q, Tensor(b!) k, Tensor q_weight, Tensor k_weight, float eps, "
       "bool is_neox, Tensor position_ids, Tensor cos_sin_cache, int rotary_dim) -> ()");
   m.impl("fused_qk_norm_rope_cpu", torch::kCPU, &fused_qk_norm_rope_cpu);
+  m.def(
+      "dsv4_hc_split_sinkhorn_cpu(Tensor mixes, Tensor scale, Tensor base, float hc_mult, int sinkhorn_iters, "
+      "float eps) -> (Tensor, Tensor, Tensor)");
+  m.impl("dsv4_hc_split_sinkhorn_cpu", torch::kCPU, &hc_split_sinkhorn_cpu);
+  m.def("dsv4_hc_combine_cpu(Tensor x_flat, Tensor pre, int hc) -> Tensor");
+  m.impl("dsv4_hc_combine_cpu", torch::kCPU, &hc_combine_cpu);
+  m.def("mhc_post_cpu(Tensor x, Tensor residual, Tensor post_mix, Tensor comb) -> Tensor");
+  m.impl("mhc_post_cpu", torch::kCPU, &mhc_post_cpu);
   m.def(
       "fused_qk_rmsnorm_cpu(Tensor q, Tensor k, Tensor q_weight, Tensor k_weight, float eps) -> "
       "(Tensor, Tensor)");
