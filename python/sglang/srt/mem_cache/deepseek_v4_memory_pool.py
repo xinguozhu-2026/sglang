@@ -813,42 +813,12 @@ class DeepSeekV4IndexerPool(KVCache):
         cache_k: torch.Tensor,
     ) -> None:
         if not cache_k.is_cuda:
-            valid = loc > 0
-            if not valid.any():
-                return
-            buf = self.index_k_with_scale_buffer[layer_id - self.start_layer]
-            valid_loc = loc[valid].long()
-            x_blocks = cache_k[valid].float().view(-1, 4, 32)
-            amax = x_blocks.abs().amax(dim=-1).clamp_min(2**-126)
-            exps = (
-                torch.ceil(torch.log2(amax / 6.0)).to(torch.int32) + 127
-            ).clamp(0, 254)
-            scales = torch.exp2((exps - 127).float()).unsqueeze(-1)
-            scaled = (x_blocks / scales).reshape(-1, 128)
-            sign = (scaled < 0).to(torch.uint8) << 3
-            ax = scaled.abs()
-            mag = (
-                (ax > 0.25).to(torch.uint8)
-                + (ax >= 0.75).to(torch.uint8)
-                + (ax > 1.25).to(torch.uint8)
-                + (ax >= 1.75).to(torch.uint8)
-                + (ax > 2.5).to(torch.uint8)
-                + (ax >= 3.5).to(torch.uint8)
-                + (ax > 5.0).to(torch.uint8)
+            torch.ops.sgl_kernel.dsv4_pack_fp4_index_k_cpu(
+                cache_k,
+                self.index_k_with_scale_buffer[layer_id - self.start_layer],
+                loc,
+                self.page_size,
             )
-            codes = sign | mag
-            packed = (codes[:, 0::2] | (codes[:, 1::2] << 4)).contiguous()
-            p = self.page_size
-            page = (valid_loc // p).unsqueeze(-1)
-            off = valid_loc % p
-            payload_cols = (off * 64).unsqueeze(-1) + torch.arange(
-                64, device=buf.device
-            )
-            scale_cols = (p * 64 + off * 4).unsqueeze(-1) + torch.arange(
-                4, device=buf.device
-            )
-            buf[page, payload_cols] = packed
-            buf[page, scale_cols] = exps.to(torch.uint8)
             return
         if self.uses_aiter_fp4_layout:
             # the FlyDSL kernels read the fp4 payload and the packed ue8m0 scales
@@ -2501,7 +2471,6 @@ class DeepSeekV4TokenToKVPool(BaseSWAKVPool):
     ) -> None:
         """q ([B, H, head_dim]): rope its query heads in the same launch."""
         if self.cpu_bf16:
-            from sglang.kernels.ops.attention.dsv4 import fused_norm_rope_inplace
             from sglang.kernels.ops.attention.dsv4.norm_rope import fused_rope_inplace
 
             if q is not None:
@@ -2509,7 +2478,9 @@ class DeepSeekV4TokenToKVPool(BaseSWAKVPool):
                     q[..., -self.qk_rope_head_dim :], None, freqs_cis, positions
                 )
             kv_fp32 = kv.float().contiguous()
-            fused_norm_rope_inplace(kv_fp32, kv_weight, eps, freqs_cis, positions)
+            torch.ops.sgl_kernel.dsv4_norm_rope_cpu(
+                kv_fp32, kv_weight, freqs_cis, positions, float(eps), False
+            )
             return self.set_swa_key_buffer_radix_fused(layer_id, swa_loc, kv_fp32)
         if self.uniform_fp8:
             assert q is None, "uniform FP8 store does not fuse query RoPE"

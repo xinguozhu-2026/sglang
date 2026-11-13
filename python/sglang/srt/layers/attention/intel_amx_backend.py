@@ -30,6 +30,9 @@ class IntelAMXAttnBackend(AttentionBackend):
         self.req_to_token_pool = model_runner.req_to_token_pool
         self.token_to_kv_pool = model_runner.token_to_kv_pool
         self.runner_ids = model_runner.runner_ids
+        self.is_dsv4 = False
+        if self._init_dsv4_if_needed(model_runner):
+            return
         self.use_mla = model_runner.use_mla_backend
         self.max_context_len = model_runner.model_config.context_len
 
@@ -121,6 +124,8 @@ class IntelAMXAttnBackend(AttentionBackend):
     def init_forward_metadata(self, forward_batch: ForwardBatch):
         """Init the metadata for a forward pass."""
 
+        if self.is_dsv4:
+            return self._init_dsv4_forward_metadata(forward_batch)
         bs = forward_batch.batch_size
         attn_logits = torch.zeros(
             (
@@ -209,6 +214,8 @@ class IntelAMXAttnBackend(AttentionBackend):
         forward_mode,
         spec_info,
     ):
+        if self.is_dsv4:
+            return
         attn_logits = torch.zeros(
             (
                 bs,
@@ -237,7 +244,21 @@ class IntelAMXAttnBackend(AttentionBackend):
         forward_batch: ForwardBatch,
         save_kv_cache=True,
         sinks=None,
+        *,
+        compress_ratio: int = 0,
+        attn_sink: torch.Tensor | None = None,
+        **kwargs,
     ):
+        if self.is_dsv4:
+            return self._forward_dsv4_attention(
+                q,
+                k,
+                layer,
+                forward_batch,
+                compress_ratio=compress_ratio,
+                attn_sink=attn_sink if attn_sink is not None else sinks,
+                save_kv_cache=save_kv_cache,
+            )
         if layer.qk_head_dim != layer.v_head_dim:
             o = q.new_empty((q.shape[0], layer.tp_q_head_num * layer.v_head_dim))
         else:
@@ -325,7 +346,21 @@ class IntelAMXAttnBackend(AttentionBackend):
         forward_batch: ForwardBatch,
         save_kv_cache=True,
         sinks=None,
+        *,
+        compress_ratio: int = 0,
+        attn_sink: torch.Tensor | None = None,
+        **kwargs,
     ):
+        if self.is_dsv4:
+            return self._forward_dsv4_attention(
+                q,
+                k,
+                layer,
+                forward_batch,
+                compress_ratio=compress_ratio,
+                attn_sink=attn_sink if attn_sink is not None else sinks,
+                save_kv_cache=save_kv_cache,
+            )
         if self.draft_decode_metadata is not None:
             req_to_token, seq_lens, req_pool_indices = self.draft_decode_metadata
         else:
@@ -426,6 +461,303 @@ class IntelAMXAttnBackend(AttentionBackend):
 
     def support_triton(self):
         return False
+
+    def _init_dsv4_if_needed(self, model_runner: ModelRunner) -> bool:
+        from sglang.srt.mem_cache.deepseek_v4_memory_pool import DeepSeekV4TokenToKVPool
+
+        if not isinstance(self.token_to_kv_pool, DeepSeekV4TokenToKVPool):
+            return False
+        assert model_runner.spec_algorithm.is_none(), (
+            "IntelAMXAttnBackend DeepSeek-V4.1 path does not yet support speculative decoding"
+        )
+        text_cfg = model_runner.model_config.hf_text_config
+        self.is_dsv4 = True
+        self.req_to_token = model_runner.req_to_token_pool.req_to_token
+        self.dsv4_window = text_cfg.sliding_window
+        self.dsv4_topk = getattr(text_cfg, "index_topk", 0)
+        self.v_head_dim = text_cfg.qk_nope_head_dim + text_cfg.qk_rope_head_dim
+        self.num_head = (
+            model_runner.model_config.num_attention_heads // get_parallel().attn_tp_size
+        )
+        self.swa_out_cache_loc = None
+        self._dsv4_meta: dict | None = None
+        self.dsv4_sparse_attn_fwd = torch.ops.sgl_kernel.dsv41_sparse_attention_cpu
+        self.dsv4_dequant_index_k_fwd = (
+            torch.ops.sgl_kernel.dsv4_gather_dequant_fp4_index_k_cpu
+        )
+        return True
+
+    def _init_dsv4_forward_metadata(self, forward_batch: ForwardBatch) -> None:
+        from sglang.srt.layers.attention.dsv4.dsv41_sparse import token_req_indices
+
+        if forward_batch.forward_mode.is_idle():
+            self._dsv4_meta = None
+            self.swa_out_cache_loc = None
+            return
+        num_tokens = forward_batch.positions.numel()
+        if forward_batch.forward_mode.is_decode():
+            req_indices = forward_batch.req_pool_indices.long()
+        else:
+            req_indices = token_req_indices(forward_batch, num_tokens=num_tokens).long()
+
+        self.swa_out_cache_loc = self.token_to_kv_pool.translate_loc_from_full_to_swa(
+            forward_batch.out_cache_loc
+        )
+        win_positions = (
+            forward_batch.positions[:, None]
+            - self.dsv4_window
+            + 1
+            + torch.arange(self.dsv4_window, device=forward_batch.positions.device)
+        )
+        full_slots = self.req_to_token[
+            req_indices[:, None], win_positions.clamp_min(0)
+        ].long()
+        swa_slots = self.token_to_kv_pool.translate_loc_from_full_to_swa(
+            full_slots
+        ).long()
+        swa_slots = swa_slots.masked_fill((win_positions < 0) | (swa_slots <= 0), -1)
+
+        self._dsv4_meta = {
+            "req_indices": req_indices,
+            "swa_slots": swa_slots,
+            "empty_extra": torch.empty((num_tokens, 0), dtype=torch.long),
+            "selected": {},
+            "candidates": None,
+        }
+
+    def get_swa_out_cache_loc(self, forward_batch: ForwardBatch) -> torch.Tensor:
+        if self.swa_out_cache_loc is not None:
+            return self.swa_out_cache_loc
+        return self.token_to_kv_pool.translate_loc_from_full_to_swa(
+            forward_batch.out_cache_loc
+        )
+
+    def store_cache(
+        self, layer_id: int, swa_k: torch.Tensor, forward_batch: ForwardBatch
+    ) -> None:
+        self.token_to_kv_pool.set_swa_key_buffer_radix_fused(
+            layer_id, self.get_swa_out_cache_loc(forward_batch), swa_k
+        )
+
+    def forward_low_ratio_sources(
+        self, *, layer, x, q_lora, positions, forward_batch: ForwardBatch
+    ) -> None:
+        if forward_batch.forward_mode.is_idle():
+            return
+        from sglang.srt.layers.attention.dsv4.dsv41_sparse import token_req_indices
+
+        meta = self._dsv4_meta
+        req = (
+            meta["req_indices"]
+            if meta is not None and meta["req_indices"].numel() == x.size(0)
+            else token_req_indices(forward_batch, num_tokens=x.size(0)).long()
+        )
+        if layer.compressor is not None:
+            self._dsv4_compress(layer, x, req, positions, forward_batch)
+        if layer.indexer is not None:
+            self._dsv4_index(layer, x, q_lora, req, positions)
+
+    def _dsv4_compress(self, layer, x, req, pos, batch: ForwardBatch) -> None:
+        from sglang.srt.mem_cache.deepseek_v4_compress_state import KVAndScore
+
+        pool = self.token_to_kv_pool
+        ratio = layer.compress_ratio
+        kv, score = layer.compressor.project(x)
+        if ratio == 2:
+            state = pool.get_attention_compress_states(layer.layer_id)
+            carried = state.get_state_by_state_loc(
+                state.translate_from_req_position_to_state_loc(req, pos - 1)
+            )
+            adjacent = torch.zeros(pos.numel(), dtype=torch.bool, device=pos.device)
+            adjacent[slice(1, None)] = (req[slice(1, None)] == req[slice(None, -1)]) & (
+                pos[slice(1, None)] == pos[slice(None, -1)] + 1
+            )
+            partner_kv = torch.where(adjacent[:, None], kv.roll(1, 0), carried.kv)
+            partner_score = torch.where(
+                adjacent[:, None], score.roll(1, 0), carried.score
+            )
+            pooled = layer.compressor.pool_pairs(
+                torch.stack((partner_kv, kv), dim=1),
+                torch.stack((partner_score, score), dim=1),
+            )
+            keep = torch.ones(pos.numel(), dtype=torch.bool, device=pos.device)
+            ring = state.ring_size
+            if pos.numel() > ring:
+                keep[:-ring] = req[:-ring] != req[ring:]
+            state.set_state_by_state_loc(
+                state.translate_from_req_position_to_state_loc(req[keep], pos[keep]),
+                KVAndScore.from_kv_score(kv=kv[keep], score=score[keep]),
+            )
+            valid = pos % 2 == 1
+            pooled = pooled[valid]
+        else:
+            valid = torch.ones(pos.numel(), dtype=torch.bool, device=pos.device)
+            pooled = kv
+
+        group_pos = pos[valid] - (ratio - 1)
+        slots = batch.out_cache_loc[valid] // ratio
+        latent = layer.compressor.finish(pooled)
+        freqs = layer.freqs_cis[group_pos]
+        if layer.indexer is not None and layer.indexer.owns_k:
+            pool.set_index_k_fp4(
+                layer.layer_id, slots, layer.indexer.index_keys(latent, freqs)
+            )
+        pool.set_extra_key_buffer_fused(layer.layer_id, slots, latent, freqs_cis=freqs)
+
+    def _dsv4_compressed_slots(self, req: int, length: int, ratio: int) -> torch.Tensor:
+        return (
+            self.req_to_token[req, ratio - 1 : length * ratio : ratio].long() // ratio
+        )
+
+    def _dsv4_index(self, layer, x, q_lora, req, pos) -> None:
+        from sglang.kernels.ops.attention.dsv4.candidate_blocks import (
+            candidate_block_mask,
+            select_candidate_block_ids,
+        )
+
+        meta = self._dsv4_meta
+        assert meta is not None, "init_forward_metadata must run before _dsv4_index"
+        indexer = layer.indexer
+        ratio = layer.compress_ratio
+        query = indexer.queries(q_lora, layer.freqs_cis, positions=pos)
+        weights = indexer.head_weights(x)
+        selected = torch.full((pos.numel(), self.dsv4_topk), -1, dtype=torch.long)
+        published: list[torch.Tensor] = [
+            torch.empty(0, dtype=torch.long) for _ in range(pos.numel())
+        ]
+
+        req_list = req.tolist()
+        pos_list = pos.tolist()
+        max_len_per_req: dict[int, int] = {}
+        for request, position in zip(req_list, pos_list):
+            length = (position + 1) // ratio
+            if length > max_len_per_req.get(request, 0):
+                max_len_per_req[request] = length
+
+        pool = self.token_to_kv_pool
+        idx_buf = pool.get_index_k_with_scale_buffer(layer.layer_id)
+        idx_page_size = pool.get_index_k_page_size(ratio)
+        req_cache: dict[int, tuple[torch.Tensor, torch.Tensor]] = {}
+        for request, max_len in max_len_per_req.items():
+            if max_len > 0:
+                all_slots = self._dsv4_compressed_slots(request, max_len, ratio)
+                all_keys = self.dsv4_dequant_index_k_fwd(
+                    idx_buf, all_slots, idx_page_size
+                )
+                req_cache[request] = (all_slots, all_keys)
+
+        n_rows = len(req_list)
+        r0 = 0
+        tile_limit = 64
+        while r0 < n_rows:
+            request = req_list[r0]
+            len0 = (pos_list[r0] + 1) // ratio
+            if len0 == 0:
+                r0 += 1
+                continue
+            r1 = r0 + 1
+            tile_max_len = len0
+            while (
+                r1 < n_rows
+                and (r1 - r0) < tile_limit
+                and req_list[r1] == request
+                and ((pos_list[r1] + 1) // ratio) > 0
+            ):
+                tile_max_len = max(tile_max_len, (pos_list[r1] + 1) // ratio)
+                r1 += 1
+
+            all_slots, all_keys = req_cache[request]
+            tile_scores = indexer.scores(
+                query[r0:r1], all_keys[:tile_max_len], weights[r0:r1]
+            )
+            for local_i, row in enumerate(range(r0, r1)):
+                length = (pos_list[row] + 1) // ratio
+                slots = all_slots[:length]
+                scores = tile_scores.select(0, local_i)[:length].clone()
+                if indexer.is_candidate_source:
+                    published[row] = select_candidate_block_ids(
+                        scores.unsqueeze(0),
+                        length,
+                        topk_blocks=indexer.candidate_topk_blocks,
+                        block_size=indexer.candidate_block_size,
+                    ).select(0, 0)
+                elif indexer.uses_candidates:
+                    candidates = meta["candidates"]
+                    assert candidates is not None, (
+                        "CSA2 candidate source has not run yet"
+                    )
+                    allowed = candidate_block_mask(
+                        candidates[row],
+                        width=length,
+                        block_size=indexer.candidate_block_size,
+                    )
+                    scores = scores.masked_fill(~allowed, -torch.inf)
+                count = min(self.dsv4_topk, length)
+                indices = scores.topk(count, sorted=False).indices
+                chosen = slots[indices].masked_fill(~scores[indices].isfinite(), -1)
+                selected[row, :count] = chosen
+            r0 = r1
+
+        meta["selected"][ratio] = selected
+        if indexer.is_candidate_source:
+            meta["candidates"] = published
+
+    def _forward_dsv4_attention(
+        self,
+        q,
+        k,
+        layer,
+        forward_batch: ForwardBatch,
+        *,
+        compress_ratio,
+        attn_sink,
+        save_kv_cache,
+    ):
+        if save_kv_cache and k is not None:
+            self.store_cache(layer.layer_id, k, forward_batch)
+        meta = self._dsv4_meta
+        assert meta is not None, "init_forward_metadata must run before attention"
+        pool = self.token_to_kv_pool
+        swa_cache = pool.get_swa_key_buffer_radix(layer.layer_id)
+        extra_cache = (
+            pool.get_extra_key_buffer(layer.layer_id) if compress_ratio else swa_cache
+        )
+        extra_slots = (
+            meta["selected"][compress_ratio] if compress_ratio else meta["empty_extra"]
+        )
+        return self.dsv4_sparse_attn_fwd(
+            q.contiguous(),
+            swa_cache,
+            extra_cache,
+            meta["swa_slots"],
+            extra_slots,
+            attn_sink.float().contiguous(),
+            float(layer.scaling),
+        )
+
+    def forward(
+        self,
+        q,
+        k,
+        v,
+        layer,
+        forward_batch: ForwardBatch,
+        save_kv_cache=True,
+        **kwargs,
+    ):
+        if self.is_dsv4:
+            if forward_batch.forward_mode.is_idle():
+                return torch.empty_like(q)
+            if forward_batch.forward_mode.is_decode():
+                return self.forward_decode(
+                    q, k, v, layer, forward_batch, save_kv_cache=save_kv_cache, **kwargs
+                )
+            return self.forward_extend(
+                q, k, v, layer, forward_batch, save_kv_cache=save_kv_cache, **kwargs
+            )
+        return super().forward(
+            q, k, v, layer, forward_batch, save_kv_cache=save_kv_cache, **kwargs
+        )
 
 
 class IntelAMXMultiStepDraftBackend:

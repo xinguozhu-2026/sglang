@@ -110,8 +110,27 @@ std::tuple<at::Tensor, at::Tensor, at::Tensor> hc_split_sinkhorn_cpu(
     int64_t sinkhorn_iters,
     double eps);
 at::Tensor hc_combine_cpu(const at::Tensor& x_flat, const at::Tensor& pre, int64_t hc);
-at::Tensor mhc_post_cpu(
-    const at::Tensor& x, const at::Tensor& residual, const at::Tensor& post_mix, const at::Tensor& comb);
+at::Tensor
+mhc_post_cpu(const at::Tensor& x, const at::Tensor& residual, const at::Tensor& post_mix, const at::Tensor& comb);
+void dsv4_norm_rope_cpu(
+    at::Tensor& input,
+    const std::optional<at::Tensor>& weight,
+    const at::Tensor& freqs_cis,
+    const at::Tensor& positions,
+    std::optional<double> eps,
+    bool inverse);
+std::tuple<at::Tensor, at::Tensor> dsv41_sqrtsoftplus_topk_cpu(
+    const at::Tensor& logits, const std::optional<at::Tensor>& bias, int64_t topk, bool renormalize);
+void dsv4_pack_fp4_index_k_cpu(const at::Tensor& input, at::Tensor& cache, const at::Tensor& loc, int64_t page_size);
+at::Tensor dsv4_gather_dequant_fp4_index_k_cpu(const at::Tensor& cache, const at::Tensor& slots, int64_t page_size);
+at::Tensor dsv41_sparse_attention_cpu(
+    const at::Tensor& q,
+    const at::Tensor& swa_cache,
+    const at::Tensor& extra_cache,
+    const at::Tensor& swa_slots,
+    const at::Tensor& extra_slots,
+    const at::Tensor& attn_sink,
+    double scaling);
 
 // fused_qk_rmsnorm
 std::tuple<at::Tensor, at::Tensor> fused_qk_rmsnorm_cpu(
@@ -714,6 +733,24 @@ TORCH_LIBRARY_FRAGMENT(sgl_kernel, m) {
   m.impl("dsv4_hc_combine_cpu", torch::kCPU, &hc_combine_cpu);
   m.def("mhc_post_cpu(Tensor x, Tensor residual, Tensor post_mix, Tensor comb) -> Tensor");
   m.impl("mhc_post_cpu", torch::kCPU, &mhc_post_cpu);
+  m.def("dsv4_hc_post_cpu(Tensor x, Tensor residual, Tensor post_mix, Tensor comb) -> Tensor");
+  m.impl("dsv4_hc_post_cpu", torch::kCPU, &mhc_post_cpu);
+  m.def(
+      "dsv4_norm_rope_cpu(Tensor(a!) input, Tensor? weight, Tensor freqs_cis, "
+      "Tensor positions, float? eps=None, bool inverse=False) -> ()");
+  m.impl("dsv4_norm_rope_cpu", torch::kCPU, &dsv4_norm_rope_cpu);
+  m.def(
+      "dsv41_sqrtsoftplus_topk_cpu(Tensor logits, Tensor? bias, int topk, "
+      "bool renormalize=False) -> (Tensor, Tensor)");
+  m.impl("dsv41_sqrtsoftplus_topk_cpu", torch::kCPU, &dsv41_sqrtsoftplus_topk_cpu);
+  m.def("dsv4_pack_fp4_index_k_cpu(Tensor input, Tensor(a!) cache, Tensor loc, int page_size) -> ()");
+  m.impl("dsv4_pack_fp4_index_k_cpu", torch::kCPU, &dsv4_pack_fp4_index_k_cpu);
+  m.def("dsv4_gather_dequant_fp4_index_k_cpu(Tensor cache, Tensor slots, int page_size) -> Tensor");
+  m.impl("dsv4_gather_dequant_fp4_index_k_cpu", torch::kCPU, &dsv4_gather_dequant_fp4_index_k_cpu);
+  m.def(
+      "dsv41_sparse_attention_cpu(Tensor q, Tensor swa_cache, Tensor extra_cache, "
+      "Tensor swa_slots, Tensor extra_slots, Tensor attn_sink, float scaling) -> Tensor");
+  m.impl("dsv41_sparse_attention_cpu", torch::kCPU, &dsv41_sparse_attention_cpu);
   m.def(
       "fused_qk_rmsnorm_cpu(Tensor q, Tensor k, Tensor q_weight, Tensor k_weight, float eps) -> "
       "(Tensor, Tensor)");

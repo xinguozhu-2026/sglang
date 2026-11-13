@@ -56,7 +56,7 @@ from sglang.srt.model_executor.runner_utils.prefill_graph import (
 )
 from sglang.srt.models.deepseek_v2 import MoEOutput
 from sglang.srt.runtime_context import get_forward, get_parallel, get_platform
-from sglang.srt.utils import is_gfx95_supported, is_hip, is_npu, is_xpu, is_cpu
+from sglang.srt.utils import is_cpu, is_gfx95_supported, is_hip, is_npu, is_xpu
 
 _is_gfx95_supported = is_gfx95_supported()
 _is_hip = is_hip()

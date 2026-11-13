@@ -698,6 +698,50 @@ class TestDeepseekV4MHC:
         ).bfloat16()
         torch.testing.assert_close(actual, expected)
 
+    def test_csa2_sparse_attention_avx512_bf16_and_fp4_indexer(self):
+        """Verify Xeon AVX512-BF16 CSA2 kernel (D=512, multi-tile H=24) and FP4 indexer pack/dequant."""
+        generator = torch.Generator().manual_seed(42)
+        t, h, d = 4, 24, 512
+        q = torch.randn(t, h, d, generator=generator, dtype=torch.bfloat16)
+        swa_cache = torch.randn(32, d, generator=generator, dtype=torch.bfloat16)
+        extra_cache = torch.randn(24, d, generator=generator, dtype=torch.bfloat16)
+        swa_slots = torch.tensor(
+            ((1, 2, 5, -1), (3, 7, 8, 9), (4, -1, -1, -1), (-1, -1, -1, -1)),
+            dtype=torch.long,
+        )
+        extra_slots = torch.tensor(
+            ((0, 6, 11), (2, -1, 15), (-1, -1, -1), (-1, -1, -1)),
+            dtype=torch.long,
+        )
+        attn_sink = torch.randn(h, generator=generator, dtype=torch.float32)
+        scale = d**-0.5
+
+        actual = torch.ops.sgl_kernel.dsv41_sparse_attention_cpu(
+            q, swa_cache, extra_cache, swa_slots, extra_slots, attn_sink, scale
+        )
+        expected = torch.zeros_like(q, dtype=torch.float32)
+        for row in range(t):
+            s_valid = swa_slots.select(0, row)[swa_slots.select(0, row) >= 0]
+            e_valid = extra_slots.select(0, row)[extra_slots.select(0, row) >= 0]
+            kv_cat = torch.cat(
+                (swa_cache[s_valid], extra_cache[e_valid]), dim=0
+            ).float()
+            logits = (q.select(0, row).float() @ kv_cat.t()) * scale
+            logits_with_sink = torch.cat((logits, attn_sink[:, None]), dim=-1)
+            probs = logits_with_sink.softmax(dim=-1)[:, :-1]
+            expected[row] = probs @ kv_cat
+        torch.testing.assert_close(actual.float(), expected, atol=2e-2, rtol=2e-2)
+
+        page_size = 64
+        cache = torch.zeros((2, page_size * 68), dtype=torch.uint8)
+        raw_k = torch.tensor((0.0, 0.5, -1.5, 6.0), dtype=torch.bfloat16).repeat(3, 32)
+        locs = torch.tensor((1, 65, -1), dtype=torch.int64)
+        torch.ops.sgl_kernel.dsv4_pack_fp4_index_k_cpu(raw_k, cache, locs, page_size)
+        restored = torch.ops.sgl_kernel.dsv4_gather_dequant_fp4_index_k_cpu(
+            cache, torch.tensor((1, 65), dtype=torch.int64), page_size
+        )
+        torch.testing.assert_close(restored, raw_k[:2], atol=0, rtol=0)
+
 
 if __name__ == "__main__":
     sys.exit(pytest.main([__file__]))
