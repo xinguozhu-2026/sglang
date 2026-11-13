@@ -2191,14 +2191,7 @@ class KVCacheConfigurator:
                 # having been emptied to ``[0] * layers`` above.
                 kv_layout_kwargs = {"npu_window_generation": "v4"}
         else:
-            if self.device == "cpu":
-                from sglang.srt.mem_cache.deepseek_v4_cpu_memory_pool import (
-                    DeepSeekV4CPUTokenToKVPool,
-                )
-
-                pool_cls = DeepSeekV4CPUTokenToKVPool
-            else:
-                pool_cls = DeepSeekV4TokenToKVPool
+            pool_cls = DeepSeekV4TokenToKVPool
             kv_layout, compressed_kv_layout = select_dsv4_kv_layout()
             kv_layout_kwargs = dict(
                 kv_layout=kv_layout, compressed_kv_layout=compressed_kv_layout
